@@ -1,0 +1,76 @@
+# Local development stack for Auth Service (M2). Not the Kubernetes/Helm
+# deployment path — that's explicitly scoped to a later milestone
+# (Helm/Kustomize/ArgoCD) per the project roadmap; this is docker-compose
+# up for running the service against real Postgres/Redis on a laptop or
+# in CI.
+#
+# Run from services/auth-service/:  docker compose -f deployment/docker-compose.yml up --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: auth
+      POSTGRES_PASSWORD: auth
+      POSTGRES_DB: auth
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth -d auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot job: applies migrations, then exits. auth-service does not
+  # migrate itself on boot (M2 keeps schema changes an explicit,
+  # separately-run step rather than something a service replica does on
+  # every restart).
+  migrate:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    entrypoint: ["/app/migrate", "-direction=up"]
+    environment:
+      POSTGRES_DSN: postgres://auth:auth@postgres:5432/auth?sslmode=disable
+      REDIS_ADDR: redis:6379
+      JWT_SIGNING_KEY: dev-only-signing-key-do-not-use-in-production
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  auth-service:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      POSTGRES_DSN: postgres://auth:auth@postgres:5432/auth?sslmode=disable
+      REDIS_ADDR: redis:6379
+      JWT_SIGNING_KEY: dev-only-signing-key-do-not-use-in-production
+      JWT_ISSUER: forgeops-auth-service
+      JWT_ACCESS_TOKEN_TTL: 15m
+      BCRYPT_COST: "12"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data:
