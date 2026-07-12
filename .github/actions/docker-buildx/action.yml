@@ -1,0 +1,13 @@
+# Composite action: Docker Buildx setup
+#
+# One-line today, but exists as its own action so buildx driver options
+# (e.g. a shared builder instance, custom platforms for multi-arch) can be
+# standardized in one place later without touching every service workflow.
+
+name: "ForgeOps: Docker Buildx setup"
+description: "Sets up Docker Buildx, standardized across all ForgeOps service builds"
+
+runs:
+  using: "composite"
+  steps:
+    - uses: docker/setup-buildx-action@v3

@@ -1,0 +1,86 @@
+# CI for Auth Service (M2 -> M3, Phase 3 migration; Phase 7/8 security and
+# quality gates added).
+#
+# This file used to contain the lint/test/build/scan/push logic directly
+# (see git history / the M3 Phase 1 zip for the pre-migration version). It
+# now just calls the reusable workflows with auth-service's specific
+# parameters. This is intentionally the template for onboarding future
+# services: copy this file, change the `with:` block, done — the actual
+# pipeline logic lives in one place (reusable-go-lint-test.yml,
+# reusable-docker-build-publish.yml, reusable-security-gates.yml) and in
+# the composite actions they call.
+#
+# ECR repository name below ("enterprise-cicd-platform/auth-service") is
+# not a guess: it's the exact value modules/ecr/main.tf computes as
+# "${var.project_name}/${each.value}" from that module's own defaults.
+# AWS_REGION and the OIDC role ARN are account-specific and were never
+# uploaded anywhere in this session, so they're read from repository
+# secrets/variables — set them in the repo's Settings > Secrets and
+# variables before this workflow can push.
+#
+# coverage-threshold below (60) is a placeholder, not a measured baseline —
+# this session has never run auth-service's test suite to see its actual
+# coverage number. Replace it with the real figure (or a couple points
+# under it) once you've measured it, so the gate reflects reality instead
+# of a guess. See docs/required-status-checks.md for the exact job names
+# to mark as required in branch protection once these jobs exist on a
+# real run.
+
+name: auth-service-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/auth-service/**"
+      - ".github/workflows/auth-service-ci.yml"
+      - ".github/workflows/reusable-go-lint-test.yml"
+      - ".github/workflows/reusable-docker-build-publish.yml"
+      - ".github/workflows/reusable-security-gates.yml"
+      - ".github/actions/**"
+  pull_request:
+    paths:
+      - "services/auth-service/**"
+      - ".github/workflows/auth-service-ci.yml"
+      - ".github/workflows/reusable-go-lint-test.yml"
+      - ".github/workflows/reusable-docker-build-publish.yml"
+      - ".github/workflows/reusable-security-gates.yml"
+      - ".github/actions/**"
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test:
+    uses: ./.github/workflows/reusable-go-lint-test.yml
+    with:
+      working-directory: services/auth-service
+      go-version: "1.22"
+      needs-db: true
+      migrate-command: "go run ./cmd/migrate -direction=up"
+      coverage-threshold: "60"
+    secrets:
+      test-env-vars: |
+        JWT_SIGNING_KEY=ci-only-signing-key-do-not-use-in-production
+
+  security-gates:
+    needs: lint-test
+    uses: ./.github/workflows/reusable-security-gates.yml
+    with:
+      working-directory: services/auth-service
+      go-version: "1.22"
+      allowed-licenses: "MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC"
+
+  build:
+    needs: [lint-test, security-gates]
+    uses: ./.github/workflows/reusable-docker-build-publish.yml
+    with:
+      context: services/auth-service
+      dockerfile: services/auth-service/deployment/Dockerfile
+      ecr-repository: enterprise-cicd-platform/auth-service
+      image-name: auth-service
+      aws-region: ${{ vars.AWS_REGION }}
+      publish: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    secrets:
+      ecr-push-role-arn: ${{ secrets.AUTH_SERVICE_ECR_PUSH_ROLE_ARN }}
+      ecr-registry: ${{ secrets.ECR_REGISTRY }}

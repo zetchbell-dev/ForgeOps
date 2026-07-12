@@ -1,0 +1,274 @@
+# Reusable Terraform CI/CD workflow.
+#
+# Deliberately generic: no assumptions about module names, directory
+# layout, or which stack this runs against. This session never had
+# visibility into ForgeOps' actual modules/ directory or root Terraform
+# config beyond a single comment referencing modules/ecr/main.tf, so rather
+# than guess at paths, every path is a caller-supplied input. Point this at
+# whatever Terraform root you want CI for (the M1 foundation, a specific
+# module, a per-environment root — whatever your actual layout is) by
+# setting `working-directory`.
+#
+# Design notes:
+# - `environment` is REQUIRED, not optional. Terraform apply against real
+#   infrastructure should always be gated by a GitHub Environment with
+#   required reviewers configured in repo settings — this workflow doesn't
+#   let you skip that by omission.
+# - The exact plan that gets reviewed (in the PR comment) is the exact plan
+#   that gets applied: the plan job uploads the binary `tfplan` file as an
+#   artifact, and the apply job downloads and applies that file rather than
+#   re-planning. Re-planning at apply time risks applying something
+#   different from what was reviewed if state drifted in between.
+# - `terraform-version` has no default — pin it explicitly to match your
+#   root module's `required_version`, rather than trusting a default here
+#   that may drift from what you actually tested against.
+#
+# Call it from a stack-specific workflow like:
+#
+#   jobs:
+#     terraform:
+#       uses: ./.github/workflows/reusable-terraform-ci.yml
+#       with:
+#         working-directory: infrastructure/environments/prod
+#         terraform-version: "1.9.8"
+#         var-file: prod.tfvars
+#         backend-config-file: backend-prod.hcl
+#         aws-region: ${{ vars.AWS_REGION }}
+#         environment: terraform-prod
+#         enable-apply: true
+#       secrets:
+#         aws-role-to-assume: ${{ secrets.TERRAFORM_PROD_ROLE_ARN }}
+
+name: reusable-terraform-ci
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Path to the Terraform root to run against, relative to repo root"
+        type: string
+        required: true
+      terraform-version:
+        description: "Terraform version to install — pin explicitly, no default is assumed"
+        type: string
+        required: true
+      var-file:
+        description: "Path to a .tfvars file, relative to working-directory. Skipped if empty."
+        type: string
+        required: false
+        default: ""
+      backend-config-file:
+        description: "Path to a backend config .hcl file for 'terraform init -backend-config=', relative to working-directory. Skipped if empty (plain 'terraform init')."
+        type: string
+        required: false
+        default: ""
+      aws-region:
+        description: "AWS region for OIDC credential exchange"
+        type: string
+        required: false
+        default: ""
+      environment:
+        description: "GitHub Environment name gating the apply job. Configure required reviewers on this environment in repo settings — that's what actually protects production."
+        type: string
+        required: true
+      enable-apply:
+        description: "Whether push-to-main runs should apply after planning. Set false for stacks where apply should stay a manual/local step even after CI plans it."
+        type: boolean
+        required: false
+        default: true
+    secrets:
+      aws-role-to-assume:
+        description: "IAM role ARN to assume via OIDC for plan and apply"
+        required: false
+    outputs:
+      has-changes:
+        description: "'true' if the plan detected infrastructure changes, 'false' if no-op"
+        value: ${{ jobs.plan.outputs.has-changes }}
+
+permissions:
+  contents: read
+
+jobs:
+  fmt-validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: terraform init (no backend, syntax/validate only)
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        run: terraform validate
+
+  plan:
+    runs-on: ubuntu-latest
+    needs: fmt-validate
+    permissions:
+      id-token: write   # required for AWS OIDC role assumption
+      contents: read
+      pull-requests: write   # to post the plan as a PR comment
+    outputs:
+      has-changes: ${{ steps.plan.outputs.has-changes }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+
+      - uses: ./.github/actions/aws-oidc-auth
+        with:
+          role-to-assume: ${{ secrets.aws-role-to-assume }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: terraform init
+        run: |
+          if [ -n "${{ inputs.backend-config-file }}" ]; then
+            terraform init -backend-config="${{ inputs.backend-config-file }}"
+          else
+            terraform init
+          fi
+
+      - name: terraform plan
+        id: plan
+        run: |
+          set +e
+          if [ -n "${{ inputs.var-file }}" ]; then
+            terraform plan -input=false -no-color -detailed-exitcode -var-file="${{ inputs.var-file }}" -out=tfplan
+          else
+            terraform plan -input=false -no-color -detailed-exitcode -out=tfplan
+          fi
+          exit_code=$?
+          set -e
+          # detailed-exitcode: 0 = no changes, 1 = error, 2 = changes present
+          if [ $exit_code -eq 1 ]; then
+            exit 1
+          fi
+          if [ $exit_code -eq 2 ]; then
+            echo "has-changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Render plan as text
+        run: terraform show -no-color tfplan > plan.txt
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.run_id }}
+          path: |
+            ${{ inputs.working-directory }}/tfplan
+            ${{ inputs.working-directory }}/plan.txt
+          retention-days: 1
+
+      - name: Plan summary
+        if: always()
+        run: |
+          {
+            echo "## Terraform plan — ${{ inputs.working-directory }}"
+            echo "Changes detected: ${{ steps.plan.outputs.has-changes }}"
+            echo "Plan artifact: \`tfplan-${{ github.run_id }}\` (1-day retention)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const planPath = path.join('${{ inputs.working-directory }}', 'plan.txt');
+            let plan = fs.readFileSync(planPath, 'utf8');
+            const maxLen = 60000; // stay well under GitHub's comment size limit
+            if (plan.length > maxLen) {
+              plan = plan.slice(0, maxLen) + '\n\n... (truncated, see workflow run for full plan)';
+            }
+            const body = `#### Terraform plan for \`${{ inputs.working-directory }}\`\n<details><summary>Show plan</summary>\n\n\`\`\`\n${plan}\n\`\`\`\n</details>`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const marker = `Terraform plan for \`${{ inputs.working-directory }}\``;
+            const existing = comments.find(c => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+  apply:
+    runs-on: ubuntu-latest
+    needs: plan
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.enable-apply &&
+      needs.plan.outputs.has-changes == 'true'
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+
+      - uses: ./.github/actions/aws-oidc-auth
+        with:
+          role-to-assume: ${{ secrets.aws-role-to-assume }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: terraform init
+        run: |
+          if [ -n "${{ inputs.backend-config-file }}" ]; then
+            terraform init -backend-config="${{ inputs.backend-config-file }}"
+          else
+            terraform init
+          fi
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ github.run_id }}
+          path: ${{ inputs.working-directory }}
+
+      - name: terraform apply
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Apply summary
+        if: always()
+        run: |
+          {
+            echo "## Terraform apply — ${{ inputs.working-directory }}"
+            echo "Environment: \`${{ inputs.environment }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,33 @@
+# Composite action: Setup Go
+#
+# Thin, standardized wrapper around actions/setup-go so every job across
+# every service installs Go the same way, with the module cache keyed on
+# that service's go.sum. Use alongside go-mod-cache for build-cache/lint-
+# cache coverage beyond what setup-go's built-in cache gives you.
+
+name: "ForgeOps: Setup Go"
+description: "Installs Go and enables the module cache, keyed on the service's go.sum"
+
+inputs:
+  go-version:
+    description: "Go version to install"
+    required: false
+    default: "1.22"
+  working-directory:
+    description: "Path to the Go module root, relative to repo root"
+    required: false
+    default: "."
+
+outputs:
+  go-version:
+    description: "The Go version that was installed"
+    value: ${{ steps.setup.outputs.go-version }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: setup
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache-dependency-path: ${{ inputs.working-directory }}/go.sum

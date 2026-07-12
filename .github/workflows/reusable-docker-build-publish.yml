@@ -1,0 +1,166 @@
+# Reusable Docker build + Trivy scan + ECR publish workflow.
+#
+# Phase 3 revision: build/tag mechanics and ECR login now come from the
+# Phase 2 composite actions (docker-buildx, docker-build-tag, ecr-login).
+# Trivy scan and SBOM generation stay inline here rather than becoming
+# composite actions themselves — Phase 7 (Security Gates) is where the
+# broader scanning story (CodeQL, dependency scanning, secret scanning)
+# gets consolidated, so it isn't split piecemeal here.
+#
+# `aws-region` moved from `secrets:` to `inputs:` in this revision: a
+# region name isn't sensitive, and treating it as a secret only makes the
+# masked-value behavior confusing in logs for no benefit.
+#
+# Call it from a service workflow like:
+#
+#   jobs:
+#     build:
+#       needs: lint-test
+#       uses: ./.github/workflows/reusable-docker-build-publish.yml
+#       with:
+#         context: services/auth-service
+#         dockerfile: services/auth-service/deployment/Dockerfile
+#         ecr-repository: enterprise-cicd-platform/auth-service
+#         aws-region: ${{ vars.AWS_REGION }}
+#         publish: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+#       secrets:
+#         ecr-push-role-arn: ${{ secrets.AUTH_SERVICE_ECR_PUSH_ROLE_ARN }}
+#         ecr-registry: ${{ secrets.ECR_REGISTRY }}
+
+name: reusable-docker-build-publish
+
+on:
+  workflow_call:
+    inputs:
+      context:
+        description: "Docker build context, relative to repo root"
+        type: string
+        required: true
+      dockerfile:
+        description: "Path to the Dockerfile, relative to repo root"
+        type: string
+        required: true
+      ecr-repository:
+        description: "ECR repository name, e.g. enterprise-cicd-platform/auth-service (must match modules/ecr's computed name)"
+        type: string
+        required: true
+      image-name:
+        description: "Local image name used for the scan/tag steps before any registry push"
+        type: string
+        required: false
+        default: ""
+      aws-region:
+        description: "AWS region for OIDC credential exchange. Required when publish=true. Not sensitive, so it's a plain input, not a secret."
+        type: string
+        required: false
+        default: ""
+      publish:
+        description: "Whether to push the built image to ECR. Callers decide this from their own branch/event conditions — this workflow never guesses."
+        type: boolean
+        required: false
+        default: false
+      trivy-severity:
+        type: string
+        required: false
+        default: "CRITICAL,HIGH"
+    secrets:
+      ecr-push-role-arn:
+        description: "IAM role ARN to assume via OIDC for the ECR push. Required when publish=true."
+        required: false
+      ecr-registry:
+        description: "ECR registry host (account-id.dkr.ecr.region.amazonaws.com). Required when publish=true."
+        required: false
+    outputs:
+      image-tag:
+        description: "The short-SHA tag applied to the built image"
+        value: ${{ jobs.build.outputs.image-tag }}
+      pushed:
+        description: "Whether the image was actually pushed to ECR"
+        value: ${{ jobs.build.outputs.pushed }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # required for AWS OIDC role assumption
+      contents: read
+    outputs:
+      image-tag: ${{ steps.build.outputs.tag }}
+      pushed: ${{ steps.push.outcome == 'success' && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: local-name
+        run: |
+          NAME="${{ inputs.image-name }}"
+          if [ -z "$NAME" ]; then
+            NAME="$(basename '${{ inputs.ecr-repository }}')"
+          fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/docker-buildx
+
+      - id: build
+        uses: ./.github/actions/docker-build-tag
+        with:
+          context: ${{ inputs.context }}
+          dockerfile: ${{ inputs.dockerfile }}
+          image-name: ${{ steps.local-name.outputs.name }}
+
+      # Registry-level scan-on-push (the ECR module's own scan_on_push=true)
+      # is complementary, not a substitute, for this: this step is the
+      # PR-blocking gate that runs before anything reaches the registry.
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ steps.build.outputs.image-ref }}
+          severity: ${{ inputs.trivy-severity }}
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Generate SBOM
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ steps.build.outputs.image-ref }}
+          format: cyclonedx
+          output: sbom-${{ steps.local-name.outputs.name }}-${{ steps.build.outputs.tag }}.cdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ steps.local-name.outputs.name }}-${{ steps.build.outputs.tag }}
+          path: sbom-${{ steps.local-name.outputs.name }}-${{ steps.build.outputs.tag }}.cdx.json
+          retention-days: 90
+
+      - uses: ./.github/actions/ecr-login
+        with:
+          role-to-assume: ${{ inputs.publish && secrets.ecr-push-role-arn || '' }}
+          aws-region: ${{ inputs.aws-region }}
+          ecr-registry: ${{ secrets.ecr-registry }}
+
+      - name: Push to ECR
+        id: push
+        if: inputs.publish
+        env:
+          ECR_REGISTRY: ${{ secrets.ecr-registry }}
+        run: |
+          docker tag ${{ steps.build.outputs.image-ref }} \
+            "$ECR_REGISTRY/${{ inputs.ecr-repository }}:${{ steps.build.outputs.tag }}"
+          docker push "$ECR_REGISTRY/${{ inputs.ecr-repository }}:${{ steps.build.outputs.tag }}"
+
+      - name: Build summary
+        if: always()
+        run: |
+          {
+            echo "## Docker build — ${{ steps.local-name.outputs.name }}"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Image | \`${{ steps.build.outputs.image-ref }}\` |"
+            echo "| ECR repository | \`${{ inputs.ecr-repository }}\` |"
+            echo "| Published | ${{ inputs.publish }} |"
+            echo "| SBOM artifact | \`sbom-${{ steps.local-name.outputs.name }}-${{ steps.build.outputs.tag }}\` (90-day retention) |"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,96 @@
+# Composite action: Docker build + tag
+#
+# Computes the standard immutable short-SHA tag, standard OCI image
+# labels, and builds the image with GitHub Actions layer caching
+# (cache-from/cache-to: type=gha). Deliberately does NOT push — pushing is
+# a separate concern with its own gating logic (branch checks, OIDC role),
+# handled by the caller together with the ecr-login action. Keeping build
+# and push separate means this action is equally usable for PR builds that
+# only need a local image to scan.
+#
+# OCI labels are computed by hand rather than via docker/metadata-action:
+# this action already owns tag computation (needed by the Trivy scan step
+# that runs between build and push), and metadata-action's tag-generation
+# half would just duplicate that. Pulling in the full action for four
+# label lines wasn't worth the extra dependency.
+
+name: "ForgeOps: Docker build + tag"
+description: "Builds a Docker image tagged with the immutable short commit SHA, using GHA layer caching"
+
+inputs:
+  context:
+    description: "Docker build context, relative to repo root"
+    required: true
+  dockerfile:
+    description: "Path to the Dockerfile, relative to repo root"
+    required: true
+  image-name:
+    description: "Local image name, e.g. auth-service"
+    required: true
+  extra-tags:
+    description: "Newline-separated additional tags (without the image name), e.g. 'latest'"
+    required: false
+    default: ""
+
+outputs:
+  tag:
+    description: "The immutable short-SHA tag (12 chars)"
+    value: ${{ steps.tag.outputs.sha }}
+  tags:
+    description: "Newline-separated list of full tags applied to the built image"
+    value: ${{ steps.tags.outputs.tags }}
+  image-ref:
+    description: "image-name:tag for the primary short-SHA tag"
+    value: ${{ inputs.image-name }}:${{ steps.tag.outputs.sha }}
+  labels:
+    description: "The OCI labels applied to the built image, newline-separated key=value pairs"
+    value: ${{ steps.meta.outputs.labels }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: tag
+      shell: bash
+      run: echo "sha=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+    - id: tags
+      shell: bash
+      run: |
+        TAGS="${{ inputs.image-name }}:${{ steps.tag.outputs.sha }}"
+        if [ -n "${{ inputs.extra-tags }}" ]; then
+          while IFS= read -r t; do
+            if [ -n "$t" ]; then
+              TAGS="$TAGS
+        ${{ inputs.image-name }}:$t"
+            fi
+          done <<< "${{ inputs.extra-tags }}"
+        fi
+        {
+          echo "tags<<GHA_TAGS_EOF"
+          echo "$TAGS"
+          echo "GHA_TAGS_EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - id: meta
+      shell: bash
+      run: |
+        {
+          echo "labels<<GHA_LABELS_EOF"
+          echo "org.opencontainers.image.title=${{ inputs.image-name }}"
+          echo "org.opencontainers.image.revision=${GITHUB_SHA}"
+          echo "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          echo "org.opencontainers.image.url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          echo "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "org.opencontainers.image.version=${{ steps.tag.outputs.sha }}"
+          echo "GHA_LABELS_EOF"
+        } >> "$GITHUB_OUTPUT"
+
+    - uses: docker/build-push-action@v5
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.dockerfile }}
+        tags: ${{ steps.tags.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        load: true
+        cache-from: type=gha
+        cache-to: type=gha,mode=max

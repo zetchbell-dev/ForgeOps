@@ -1,0 +1,43 @@
+# Composite action: Go build/lint cache
+#
+# actions/setup-go's built-in `cache: true` already covers the module
+# download cache (~/go/pkg/mod). This action covers what that doesn't: the
+# Go build cache and the golangci-lint cache, which matter most on repeat
+# lint/test runs against an unchanged go.sum. Cache key includes a hash of
+# the service's *.go files so a code change (not just a dependency change)
+# still invalidates stale build cache entries.
+
+name: "ForgeOps: Go build/lint cache"
+description: "Caches the Go build cache and golangci-lint cache, on top of setup-go's module cache"
+
+inputs:
+  working-directory:
+    description: "Path to the Go module root, relative to repo root"
+    required: false
+    default: "."
+  go-version:
+    description: "Go version, included in the cache key so version bumps invalidate cleanly"
+    required: false
+    default: "1.22"
+
+outputs:
+  cache-hit:
+    description: "Whether an exact cache match was found"
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/.cache/golangci-lint
+        key: >-
+          ${{ runner.os }}-gobuild-${{ inputs.go-version }}-${{
+          hashFiles(format('{0}/go.sum', inputs.working-directory)) }}-${{
+          hashFiles(format('{0}/**/*.go', inputs.working-directory)) }}
+        restore-keys: |
+          ${{ runner.os }}-gobuild-${{ inputs.go-version }}-${{ hashFiles(format('{0}/go.sum', inputs.working-directory)) }}-
+          ${{ runner.os }}-gobuild-${{ inputs.go-version }}-

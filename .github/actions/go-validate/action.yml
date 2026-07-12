@@ -1,0 +1,46 @@
+# Composite action: Common Go validation
+#
+# gofmt + go vet always run (same checks auth-service-ci.yml's lint job
+# already does). golangci-lint runs conditionally, only if the service
+# actually has a .golangci.yml/.golangci.yaml — so this action is safe to
+# call from services that haven't adopted golangci-lint yet without failing
+# on a missing config.
+
+name: "ForgeOps: Go validation"
+description: "Runs gofmt check, go vet, and golangci-lint (if configured) against a Go module"
+
+inputs:
+  working-directory:
+    description: "Path to the Go module root, relative to repo root"
+    required: false
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    - name: gofmt
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: gofmt -l . | tee /tmp/gofmt.out && test ! -s /tmp/gofmt.out
+
+    - name: go vet
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: go vet ./...
+
+    - name: Check for golangci-lint config
+      id: golangci-check
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ -f .golangci.yml ] || [ -f .golangci.yaml ]; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "present=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: golangci-lint
+      if: steps.golangci-check.outputs.present == 'true'
+      uses: golangci/golangci-lint-action@v6
+      with:
+        working-directory: ${{ inputs.working-directory }}

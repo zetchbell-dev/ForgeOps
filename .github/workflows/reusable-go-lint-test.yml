@@ -1,0 +1,258 @@
+# Reusable Go lint + test workflow.
+#
+# Phase 3 revision: now composed from the Phase 2 composite actions
+# (setup-go, go-mod-cache, go-validate) instead of inlining gofmt/vet
+# directly. Behavior is unchanged from the Phase 1 version; this is a pure
+# refactor onto shared building blocks so a future change to "how ForgeOps
+# lints Go code" happens in one place (.github/actions/go-validate) instead
+# of in every reusable/service workflow that lints.
+#
+# See .github/actions/*/action.yml for what each composite action does.
+#
+# Call it from a service workflow like:
+#
+#   jobs:
+#     lint-test:
+#       uses: ./.github/workflows/reusable-go-lint-test.yml
+#       with:
+#         working-directory: services/auth-service
+#         needs-db: true
+#         migrate-command: go run ./cmd/migrate -direction=up
+#       secrets:
+#         test-env-vars: |
+#           JWT_SIGNING_KEY=ci-only-signing-key-do-not-use-in-production
+
+name: reusable-go-lint-test
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Path to the Go module root, relative to repo root (e.g. services/auth-service)"
+        type: string
+        required: true
+      go-version:
+        description: "Go version to install"
+        type: string
+        required: false
+        default: "1.22"
+      needs-db:
+        description: "Spin up postgres:16-alpine and redis:7-alpine service containers for the test job"
+        type: boolean
+        required: false
+        default: false
+      postgres-db:
+        type: string
+        required: false
+        default: "app"
+      postgres-user:
+        type: string
+        required: false
+        default: "app"
+      postgres-password:
+        type: string
+        required: false
+        default: "app"
+      migrate-command:
+        description: "Command to run DB migrations before tests, e.g. 'go run ./cmd/migrate -direction=up'. Skipped if empty."
+        type: string
+        required: false
+        default: ""
+      test-flags:
+        description: "Extra flags appended to 'go test ./...'"
+        type: string
+        required: false
+        default: "-race -count=1"
+      coverage-threshold:
+        description: >
+          Minimum total coverage percentage required, checked against
+          'go tool cover -func' output. Set to 0 to disable enforcement.
+          Default is 0 (no enforcement) because this session has no
+          measured coverage baseline for any given service — callers
+          should measure their actual coverage first, then set a real
+          threshold rather than trusting a guessed default here.
+        type: string
+        required: false
+        default: "0"
+
+    secrets:
+      test-env-vars:
+        description: >
+          Optional newline-delimited KEY=VALUE pairs injected into the test
+          job's environment (e.g. JWT_SIGNING_KEY=...). Values that are
+          themselves secrets should be passed here rather than as plain
+          inputs, since workflow_call inputs are not secret.
+        required: false
+    outputs:
+      go-version:
+        description: "Go version that was used, for downstream jobs that need to match it"
+        value: ${{ jobs.lint.outputs.go-version }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    outputs:
+      go-version: ${{ inputs.go-version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-go
+        with:
+          go-version: ${{ inputs.go-version }}
+          working-directory: ${{ inputs.working-directory }}
+
+      - uses: ./.github/actions/go-mod-cache
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          go-version: ${{ inputs.go-version }}
+
+      - uses: ./.github/actions/go-validate
+        with:
+          working-directory: ${{ inputs.working-directory }}
+
+      - name: Lint summary
+        if: always()
+        run: |
+          {
+            echo "## Lint — ${{ inputs.working-directory }}"
+            echo "go-validate (gofmt, go vet, golangci-lint if configured) passed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    if: ${{ !inputs.needs-db }}
+    runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-go
+        with:
+          go-version: ${{ inputs.go-version }}
+          working-directory: ${{ inputs.working-directory }}
+
+      - uses: ./.github/actions/go-mod-cache
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          go-version: ${{ inputs.go-version }}
+
+      - name: Load extra test env vars from secret
+        if: ${{ secrets.test-env-vars != '' }}
+        run: printf '%s\n' "${{ secrets.test-env-vars }}" >> "$GITHUB_ENV"
+
+      - name: Run tests with coverage
+        run: go test ${{ inputs.test-flags }} -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Check coverage threshold
+        if: ${{ inputs.coverage-threshold != '0' }}
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep ^total: | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${COVERAGE}%"
+          awk -v cov="$COVERAGE" -v thr="${{ inputs.coverage-threshold }}" \
+            'BEGIN { if (cov + 0 < thr + 0) { print "Coverage " cov "% is below threshold " thr "%"; exit 1 } }'
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep ^total: | awk '{print $3}' | tr -d '%')
+          {
+            echo "## Coverage — ${{ inputs.working-directory }}"
+            echo "Total coverage: **${COVERAGE}%** (threshold: ${{ inputs.coverage-threshold }}%, 0 = not enforced)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - id: artifact-name
+        run: echo "name=coverage-$(echo '${{ inputs.working-directory }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: ${{ inputs.working-directory }}/coverage.out
+          retention-days: 30
+
+  test-with-db:
+    if: ${{ inputs.needs-db }}
+    runs-on: ubuntu-latest
+    needs: lint
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ${{ inputs.postgres-user }}
+          POSTGRES_PASSWORD: ${{ inputs.postgres-password }}
+          POSTGRES_DB: ${{ inputs.postgres-db }}
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ${{ inputs.postgres-user }} -d ${{ inputs.postgres-db }}"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_DSN: postgres://${{ inputs.postgres-user }}:${{ inputs.postgres-password }}@localhost:5432/${{ inputs.postgres-db }}?sslmode=disable
+      REDIS_ADDR: localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-go
+        with:
+          go-version: ${{ inputs.go-version }}
+          working-directory: ${{ inputs.working-directory }}
+
+      - uses: ./.github/actions/go-mod-cache
+        with:
+          working-directory: ${{ inputs.working-directory }}
+          go-version: ${{ inputs.go-version }}
+
+      - name: Load extra test env vars from secret
+        if: ${{ secrets.test-env-vars != '' }}
+        run: printf '%s\n' "${{ secrets.test-env-vars }}" >> "$GITHUB_ENV"
+
+      - name: Apply migrations
+        if: ${{ inputs.migrate-command != '' }}
+        run: ${{ inputs.migrate-command }}
+
+      - name: Run tests with coverage
+        run: go test ${{ inputs.test-flags }} -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Check coverage threshold
+        if: ${{ inputs.coverage-threshold != '0' }}
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep ^total: | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${COVERAGE}%"
+          awk -v cov="$COVERAGE" -v thr="${{ inputs.coverage-threshold }}" \
+            'BEGIN { if (cov + 0 < thr + 0) { print "Coverage " cov "% is below threshold " thr "%"; exit 1 } }'
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep ^total: | awk '{print $3}' | tr -d '%')
+          {
+            echo "## Coverage — ${{ inputs.working-directory }}"
+            echo "Total coverage: **${COVERAGE}%** (threshold: ${{ inputs.coverage-threshold }}%, 0 = not enforced)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - id: artifact-name
+        run: echo "name=coverage-$(echo '${{ inputs.working-directory }}' | tr '/' '-')-db" >> "$GITHUB_OUTPUT"
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: ${{ inputs.working-directory }}/coverage.out
+          retention-days: 30

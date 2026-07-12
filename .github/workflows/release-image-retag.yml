@@ -1,0 +1,90 @@
+# Retags a release image in ECR.
+#
+# Triggered when release-please publishes a GitHub Release. Does NOT
+# rebuild the image — it checks out the exact commit the release tag
+# points to, derives the short-SHA tag that services CI already built and
+# Trivy-scanned for that commit (see reusable-docker-build-publish.yml /
+# docker-build-tag), and adds the release version as an additional tag on
+# that same image. This means a release always ships exactly the bytes
+# that passed CI, never a fresh build that could differ.
+#
+# Requires the docker/build-push-action image from the original CI run to
+# still exist in ECR — since that push only happens on merge to main
+# (reusable-docker-build-publish.yml's `publish` gate), and release-please
+# only tags commits already on main, this should always hold. If it
+# doesn't (e.g. ECR lifecycle policy expired the SHA-tagged image before
+# release), this job fails loudly on `docker pull` rather than silently
+# rebuilding something different.
+#
+# Component -> ECR repository mapping is a case statement below rather
+# than a lookup table, since GitHub Actions secrets/vars can't be indexed
+# by a dynamic key. Onboarding a new service means adding one case here.
+
+name: release-image-retag
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  retag:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Parse component and version from release tag
+        id: parse
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          if [[ ! "$TAG" =~ ^([a-z0-9-]+)-v([0-9]+\.[0-9]+\.[0-9]+.*)$ ]]; then
+            echo "::error::Tag '$TAG' doesn't match the expected '<component>-v<semver>' format from release-please-config.json — skipping retag."
+            exit 1
+          fi
+          echo "component=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "version=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+
+      - name: Map component to ECR repository
+        id: repo
+        run: |
+          case "${{ steps.parse.outputs.component }}" in
+            auth-service)
+              echo "ecr-repository=enterprise-cicd-platform/auth-service" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::No ECR repository mapping for component '${{ steps.parse.outputs.component }}'. Add a case here in .github/workflows/release-image-retag.yml."
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Resolve source image tag (matches the CI build's short SHA)
+        id: source
+        run: echo "sha=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/ecr-login
+        with:
+          role-to-assume: ${{ secrets.RELEASE_ECR_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          ecr-registry: ${{ secrets.ECR_REGISTRY }}
+
+      - name: Retag and push release image
+        env:
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+          ECR_REPOSITORY: ${{ steps.repo.outputs.ecr-repository }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          VERSION: ${{ steps.parse.outputs.version }}
+        run: |
+          SOURCE_REF="$ECR_REGISTRY/$ECR_REPOSITORY:$SOURCE_SHA"
+          RELEASE_REF="$ECR_REGISTRY/$ECR_REPOSITORY:v$VERSION"
+          docker pull "$SOURCE_REF"
+          docker tag "$SOURCE_REF" "$RELEASE_REF"
+          docker push "$RELEASE_REF"
+          echo "Tagged $SOURCE_REF as $RELEASE_REF"

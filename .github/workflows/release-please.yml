@@ -1,0 +1,42 @@
+# Release automation via release-please.
+#
+# On every push to main, this either opens/updates a "release PR" (a PR
+# that accumulates the pending version bump + generated CHANGELOG.md entry
+# from conventional commits since the last release) or, if a pending
+# release PR was just merged, cuts the actual GitHub Release and tag.
+#
+# Monorepo-aware via release-please-config.json — right now that config has
+# one package (services/auth-service). Onboarding a new service means
+# adding an entry to release-please-config.json's "packages" map and an
+# initial version entry in .release-please-manifest.json; nothing in this
+# workflow file changes.
+#
+# Tags are of the form "<component>-v<version>" (e.g. "auth-service-v1.2.3")
+# per release-please-config.json's component field — that's the format
+# .github/workflows/release-image-retag.yml parses to know which service
+# and version a release is for.
+#
+# Note: release-please's config schema has evolved across major versions —
+# double check release-please-config.json's exact fields (bump-minor-pre-
+# major, tag format, etc.) against the current googleapis/release-please
+# docs / v4 action README before relying on this in production, since
+# details here may drift from whatever version is current when you run it.
+
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

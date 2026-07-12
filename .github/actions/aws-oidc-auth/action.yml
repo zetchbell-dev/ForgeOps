@@ -1,0 +1,32 @@
+# Composite action: AWS OIDC auth
+#
+# Generic AWS credential exchange via OIDC role assumption — no ECR login,
+# no Docker anything. Used by the Terraform CI workflow, and could replace
+# the AWS-credential half of ecr-login later if that ever gets split (not
+# doing that refactor now, since ecr-login already ships and works; not
+# touching it without a reason per the project's own conventions).
+#
+# Safe to call unconditionally: no-ops if role-to-assume is empty.
+
+name: "ForgeOps: AWS OIDC auth"
+description: "Assumes an AWS IAM role via OIDC. No-op if role-to-assume is empty."
+
+inputs:
+  role-to-assume:
+    description: "IAM role ARN to assume via OIDC. Leave empty to skip entirely."
+    required: false
+    default: ""
+  aws-region:
+    description: "AWS region for the OIDC credential exchange"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Configure AWS credentials
+      if: inputs.role-to-assume != ''
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.role-to-assume }}
+        aws-region: ${{ inputs.aws-region }}

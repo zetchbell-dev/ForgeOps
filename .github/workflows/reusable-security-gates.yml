@@ -1,0 +1,140 @@
+# Reusable security gates workflow — per-Go-module security checks.
+#
+# Scope note: this covers the checks that need a Go module to analyze
+# (CodeQL, govulncheck, license compliance) and is called once per service,
+# same pattern as reusable-go-lint-test.yml. Secret scanning is deliberately
+# NOT here — secrets don't respect service directory boundaries, so that's
+# a standalone repo-wide workflow (secret-scan.yml), not parameterized per
+# service.
+#
+# go-licenses check flag: --allowed_licenses (confirmed against current
+# tool docs, not assumed from memory) takes a comma-separated list of SPDX
+# identifiers and target package args in the same ./... style as go build.
+#
+# Call it from a service workflow like:
+#
+#   jobs:
+#     security-gates:
+#       needs: lint-test
+#       uses: ./.github/workflows/reusable-security-gates.yml
+#       with:
+#         working-directory: services/auth-service
+#         go-version: "1.22"
+#         allowed-licenses: "MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC"
+
+name: reusable-security-gates
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Path to the Go module root, relative to repo root (e.g. services/auth-service)"
+        type: string
+        required: true
+      go-version:
+        description: "Go version to install"
+        type: string
+        required: false
+        default: "1.22"
+      allowed-licenses:
+        description: "Comma-separated list of allowed SPDX license identifiers, passed to 'go-licenses check --allowed_licenses'"
+        type: string
+        required: false
+        default: "MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC"
+      codeql-language:
+        description: "Language identifier for CodeQL's init/analyze steps"
+        type: string
+        required: false
+        default: "go"
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # required to upload CodeQL results to the Security tab
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ inputs.codeql-language }}
+
+      # Go is compiled, so CodeQL needs a real build to trace through.
+      # autobuild covers a standard `go build ./...` layout; if a service
+      # ever needs a non-standard build step, replace this with an explicit
+      # build command before the analyze step.
+      - uses: github/codeql-action/autobuild@v3
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ inputs.codeql-language }}"
+
+      - name: CodeQL summary
+        if: always()
+        run: |
+          {
+            echo "## CodeQL — ${{ inputs.working-directory }}"
+            echo "Language: \`${{ inputs.codeql-language }}\`"
+            echo "Findings are uploaded to the repository's Security tab, not this summary."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        id: govulncheck
+        run: govulncheck ./...
+
+      - name: govulncheck summary
+        if: always()
+        run: |
+          {
+            echo "## govulncheck — ${{ inputs.working-directory }}"
+            echo "Result: ${{ steps.govulncheck.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  license-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+
+      - name: Install go-licenses
+        run: go install github.com/google/go-licenses@latest
+
+      - name: Check dependency licenses
+        id: license-check
+        run: go-licenses check ./... --allowed_licenses="${{ inputs.allowed-licenses }}"
+
+      - name: License summary
+        if: always()
+        run: |
+          {
+            echo "## License compliance — ${{ inputs.working-directory }}"
+            echo "Allowed licenses: \`${{ inputs.allowed-licenses }}\`"
+            echo "Result: ${{ steps.license-check.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
