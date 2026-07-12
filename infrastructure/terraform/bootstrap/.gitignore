@@ -1,0 +1,8 @@
+# This module's state is local by design (see README.md — it provisions the
+# backend every other environment depends on, so it can't use that backend
+# itself). Never commit it: it contains resource IDs for the state bucket,
+# lock table, and KMS key.
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+.terraform.lock.hcl
