@@ -1,0 +1,23 @@
+# Name is load-bearing: grafana/configmap-datasources.yaml's commented
+# Phase 4 placeholder already assumes `loki.monitoring.svc:3100` —
+# confirmed to match here rather than left to drift.
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  labels:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/instance: forgeops
+    app.kubernetes.io/part-of: forgeops
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/instance: forgeops
+  ports:
+    - name: http
+      port: 3100
+      targetPort: http
+    - name: grpc
+      port: 9095
+      targetPort: grpc

@@ -1,0 +1,19 @@
+# Included as a resource from ../kustomization.yaml, same pattern as
+# ../grafana/kustomization.yaml and ../logging/kustomization.yaml. Own
+# `namespace:` here only matters for standalone `kustomize build` of
+# this directory.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: monitoring
+
+resources:
+  - serviceaccount.yaml
+  - rbac.yaml
+  - otel-collector-configmap.yaml
+  - otel-collector-deployment.yaml
+  - otel-collector-service.yaml
+  - tempo-configmap.yaml
+  - tempo-pvc.yaml
+  - tempo-deployment.yaml
+  - tempo-service.yaml

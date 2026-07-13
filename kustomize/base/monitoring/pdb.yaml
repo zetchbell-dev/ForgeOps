@@ -1,0 +1,38 @@
+# PDB selectors match prometheus.yaml/alertmanager.yaml's `podMetadata.labels`
+# exactly (app.kubernetes.io/name + app.kubernetes.io/instance) — those are
+# the only labels this repository controls; the Operator also stamps its
+# own labels (e.g. `prometheus: forgeops`, `app.kubernetes.io/managed-by`)
+# onto the pods it creates, but selecting on the subset we author here is
+# both simpler and forward-compatible with Operator versions that add or
+# rename Operator-owned labels.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: prometheus
+spec:
+  # Prometheus's 2 replicas are independent, redundant scrapers with no
+  # gossip/quorum relationship (unlike Alertmanager below) — the only
+  # thing to protect against is a voluntary disruption (node drain,
+  # cluster upgrade) taking out both at once and creating a scrape gap.
+  # 2 replicas -> maxUnavailable: 1 keeps at least one alive at all times.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+      app.kubernetes.io/instance: forgeops
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: alertmanager
+spec:
+  # alertmanager.yaml's replicas: 3 is sized for gossip-cluster quorum
+  # (majority = 2 of 3). maxUnavailable: 1 is the ceiling that preserves
+  # that majority during a voluntary disruption — allowing 2 unavailable
+  # would let a node drain silently drop the cluster below quorum and
+  # break notification deduplication.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+      app.kubernetes.io/instance: forgeops

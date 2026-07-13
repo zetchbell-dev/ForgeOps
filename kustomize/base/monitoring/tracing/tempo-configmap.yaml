@@ -1,0 +1,52 @@
+# Single-binary (monolithic) Tempo deployment: all components
+# (distributor/ingester/querier/compactor) in one process, matching
+# Loki's own single-binary choice one directory up (logging/
+# loki-configmap.yaml) for the same reason — this milestone's traffic
+# volume doesn't yet justify microservices-mode Tempo, and monolithic
+# mode is the documented, supported way to run it at small scale.
+#
+# `local` storage backend + the PVC in tempo-pvc.yaml is the trace-
+# storage equivalent of Loki's filesystem backend — swap for
+# S3/GCS/Azure blob storage in an overlay before running this at
+# production trace volume; local-disk retention here is bounded by the
+# PVC size, not a real object-store lifecycle policy.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  labels:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/part-of: forgeops
+data:
+  tempo.yaml: |
+    server:
+      http_listen_port: 3200
+
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+
+    ingester:
+      trace_idle_period: 10s
+      max_block_duration: 5m
+
+    compactor:
+      compaction:
+        block_retention: 360h  # 15d — matches prometheus.yaml's `retention: 15d` and logging/loki-configmap.yaml's `retention_period: 360h`, one retention window across metrics/logs/traces
+
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/traces
+        wal:
+          path: /var/tempo/wal
+
+    query_frontend:
+      search:
+        max_duration: 168h  # 7d — bounds how far back a Grafana Explore trace search can scan

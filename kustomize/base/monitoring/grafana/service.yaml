@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: forgeops
+    app.kubernetes.io/part-of: forgeops
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: forgeops
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

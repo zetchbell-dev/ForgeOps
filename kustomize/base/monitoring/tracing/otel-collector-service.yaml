@@ -1,0 +1,24 @@
+# Name is load-bearing: services set OTEL_EXPORTER_OTLP_ENDPOINT to
+# `otel-collector.monitoring.svc:4318` (HTTP) or `:4317` (gRPC) — Phase
+# 1's tracing.go Config.Endpoint expects exactly this host:port form
+# (no scheme; Config.Insecure=true selects http/plaintext transport).
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/instance: forgeops
+    app.kubernetes.io/part-of: forgeops
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/instance: forgeops
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http

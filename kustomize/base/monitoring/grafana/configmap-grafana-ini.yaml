@@ -1,0 +1,44 @@
+# Base grafana.ini. Deliberately minimal — auth/SMTP/SSO settings are
+# left to an overlay (same pattern as prometheus.yaml/alertmanager.yaml's
+# storage-size layering) since those vary by environment and by whatever
+# identity provider ForgeOps eventually standardizes on.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: forgeops
+data:
+  grafana.ini: |
+    [server]
+    protocol = http
+    http_port = 3000
+
+    [database]
+    # Default sqlite3 backend. Fine for a single replica (see deployment.yaml's
+    # comment on why this stays at replicas: 1). Migrate to Postgres/MySQL
+    # here before ever scaling Grafana horizontally.
+    type = sqlite3
+    path = grafana.db
+
+    [analytics]
+    reporting_enabled = false
+    check_for_updates = false
+
+    [security]
+    # GF_SECURITY_ADMIN_USER / GF_SECURITY_ADMIN_PASSWORD env vars
+    # (from secret-grafana-admin.yaml) take precedence over any value here.
+    cookie_secure = true
+
+    [users]
+    allow_sign_up = false
+
+    [dashboards]
+    default_home_dashboard_path = /var/lib/grafana/dashboards/platform/platform.json
+
+    [unified_alerting]
+    # Grafana-native alerting stays off — Alertmanager (Phase 2) is the
+    # single source of truth for alert routing/notification. Enabling this
+    # would create a second, competing alerting pipeline.
+    enabled = false

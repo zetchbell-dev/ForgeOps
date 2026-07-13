@@ -1,0 +1,48 @@
+# Scrapes auth-service's /metrics endpoint (M5 Phase 1's httpmw + router
+# wiring — see Phase 1's router.go comment: "/metrics for Prometheus
+# scraping"). `namespaceSelector` targets the auth-service-{dev,staging,
+# prod} namespaces the M4 Helm chart deploys into (that base doesn't
+# exist in this repo's kustomize tree yet — see README.md's "Not included
+# here" section on networkpolicy.yaml for the same gap) rather than
+# `monitoring`, since auth-service itself never runs there.
+#
+# `environment` relabeling derives its value from the namespace name
+# (`auth-service-dev` -> `dev`) because auth-service's own Service/Pod
+# labels (M4 Helm chart's `auth-service.selectorLabels`) don't carry an
+# environment label today — recording rules in
+# prometheusrule-recording-auth-service.yaml, and every panel in Phase
+# 3's `configmap-dashboards-auth-service.yaml`, filter on `environment`,
+# so this is the one place that label has to originate.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: auth-service
+  labels:
+    app.kubernetes.io/name: auth-service
+    app.kubernetes.io/part-of: forgeops
+spec:
+  namespaceSelector:
+    matchNames:
+      - auth-service-dev
+      - auth-service-staging
+      - auth-service-prod
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auth-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_namespace]
+          regex: "auth-service-(.*)"
+          targetLabel: environment
+          replacement: "$1"
+        # Pinned explicitly rather than left to default to the Service's
+        # metadata.name (Helm's fullname template can prefix it with the
+        # release name, e.g. `prod-auth-service`) — every recording rule
+        # in prometheusrule-recording-auth-service.yaml filters on
+        # `job="auth-service"`, so this has to be stable regardless of
+        # what the Service is actually named per environment.
+        - targetLabel: job
+          replacement: auth-service

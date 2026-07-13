@@ -1,0 +1,58 @@
+# kustomize/base/monitoring
+#
+# PREREQUISITE (not part of this kustomization, must exist in-cluster first):
+# the Prometheus Operator itself — its CRDs (Prometheus, Alertmanager,
+# ServiceMonitor, PodMonitor, PrometheusRule) and its own cluster-scoped
+# ClusterRole/ClusterRoleBinding/Deployment. Typically installed once via
+# the upstream prometheus-operator/kube-prometheus bundle or Helm chart,
+# outside this repo's kustomize tree, before any resource below can
+# reconcile. rbac.yaml in this directory is Prometheus's own runtime RBAC
+# (scrape-target discovery), not the Operator's install-time RBAC — see
+# rbac.yaml's header comment.
+#
+# NOTE ON NAMESPACING: every resource below is namespace-scoped except
+# namespace.yaml itself (Namespace), rbac.yaml's ClusterRole/
+# ClusterRoleBinding, and prometheusrule-alerts-auth-service.yaml's
+# reliance on kube-state-metrics being scraped cluster-wide (that alert
+# will not fire until kube-state-metrics is deployed — flagged in the
+# file itself, not fixed here as it's out of Phase 2 scope).
+# `namespace: monitoring` below only applies to namespace-scoped kinds;
+# kustomize leaves the Namespace/ClusterRole/ClusterRoleBinding alone.
+#
+# NOT INCLUDED HERE: networkpolicy.yaml. That NetworkPolicy's podSelector
+# targets auth-service workloads and must live in each auth-service
+# environment namespace (auth-service-dev/staging/prod), not `monitoring`
+# — it depends on the auth-service kustomize base (M4), which does not
+# exist in the repository yet. It ships alongside these files as a
+# forward reference; apply it manually per-namespace, or fold it into
+# the auth-service overlays once M4 is merged. Do not apply it into
+# `monitoring` — its podSelector would match nothing there.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: monitoring
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - rbac.yaml
+  - prometheus.yaml
+  - alertmanager.yaml
+  - alertmanager-config-secret.yaml
+  - servicemonitor-auth-service.yaml
+  - servicemonitor-platform-self.yaml
+  - prometheusrule-recording-auth-service.yaml
+  - prometheusrule-alerts-auth-service.yaml
+  - prometheusrule-alerts-platform.yaml
+  - pdb.yaml
+  # M5 Phase 3 — Grafana. Its own kustomization.yaml lists its resources;
+  # `namespace: monitoring` above applies to those too once combined here.
+  - grafana
+  # M5 Phase 4 — Logging (Loki + Fluent Bit). Same pattern as grafana/
+  # above. Note: fluentbit-rbac.yaml's ClusterRole/ClusterRoleBinding are
+  # cluster-scoped, so `namespace: monitoring` correctly leaves them alone.
+  - logging
+  # M5 Phase 5 — Distributed Tracing (OTel Collector + Tempo). Same
+  # pattern as grafana/ and logging/ above.
+  - tracing

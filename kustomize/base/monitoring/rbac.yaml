@@ -1,0 +1,42 @@
+# Prometheus's own runtime RBAC (scrape-target discovery via the K8s API:
+# list/watch Services, Endpoints, Pods, and read Node metadata for the
+# `kubernetes-nodes`-style targets ServiceMonitor/PodMonitor selection
+# resolves against). This is NOT the Prometheus Operator's install-time
+# RBAC (CRD management, Deployment/StatefulSet creation for Prometheus/
+# Alertmanager CRs) — that lives with the Operator's own install,
+# outside this kustomization (see README.md prerequisite #1).
+# Cluster-scoped: kustomize's `namespace: monitoring` transformer leaves
+# ClusterRole/ClusterRoleBinding alone (same as namespace.yaml).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/metrics
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs:
+      - /metrics
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: monitoring

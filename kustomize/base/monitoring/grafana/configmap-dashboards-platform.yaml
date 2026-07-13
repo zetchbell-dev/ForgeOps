@@ -1,0 +1,83 @@
+# Platform self-health dashboard: Prometheus/Alertmanager watching
+# themselves. Mirrors prometheusrule-alerts-platform.yaml's alert logic
+# (rule eval failures, config hash consistency, Watchdog) as visual panels.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-platform
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: forgeops
+    grafana_dashboard: "1"
+data:
+  platform.json: |
+    {
+      "id": null,
+      "uid": "monitoring-platform-self",
+      "title": "Monitoring Platform Self-Health",
+      "tags": ["forgeops", "platform", "m5"],
+      "timezone": "utc",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": { "from": "now-3h", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Scrape Target Health",
+          "type": "table",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "up{job=~\"auth-service.*|prometheus.*|alertmanager.*\"}", "format": "table", "instant": true }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Rule Evaluation Failures",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "increase(prometheus_rule_evaluation_failures_total[5m])", "legendFormat": "{{instance}}" }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "TSDB Head Series",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "prometheus_tsdb_head_series", "legendFormat": "{{instance}}" }
+          ],
+          "description": "Cardinality trend — sudden jumps often mean a label went unbounded."
+        },
+        {
+          "id": 4,
+          "title": "Alertmanager Config Hash Consistency",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "count(count_values(\"config_hash\", alertmanager_config_hash))", "legendFormat": "distinct config hashes" }
+          ],
+          "fieldConfig": { "defaults": { "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 2 }
+          ] } }, "overrides": [] },
+          "description": "Should always read 1 — matches AlertmanagerConfigInconsistent alert's logic."
+        },
+        {
+          "id": 5,
+          "title": "Watchdog Heartbeat",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 24, "x": 0, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "vector(1)", "legendFormat": "alerting pipeline alive" }
+          ],
+          "description": "Mirrors the always-firing Watchdog alert — confirms Prometheus itself is evaluating."
+        }
+      ]
+    }

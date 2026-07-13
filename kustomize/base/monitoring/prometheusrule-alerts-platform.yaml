@@ -1,0 +1,58 @@
+# Platform self-health alerts, scraped via servicemonitor-platform-self.yaml.
+# `component: platform` (not `auth-service`) is what keeps these grouped
+# separately from auth-service.alerts in Phase 3's alerts-overview
+# dashboard (`sum by (component) (ALERTS{alertstate="firing"})`).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-alerts
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: forgeops
+    role: alert-rules
+spec:
+  groups:
+    - name: platform.alerts
+      rules:
+        - alert: PrometheusConfigReloadFailed
+          expr: prometheus_config_last_reload_successful{job="prometheus-self"} == 0
+          for: 10m
+          labels:
+            severity: warning
+            component: platform
+          annotations:
+            summary: "Prometheus config reload failing"
+            description: "prometheus_config_last_reload_successful has been 0 for 10 minutes — the last scrape-config/rule change did not take effect."
+
+        - alert: PrometheusRuleEvaluationFailures
+          expr: increase(prometheus_rule_evaluation_failures_total{job="prometheus-self"}[15m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+            component: platform
+          annotations:
+            summary: "Prometheus rule evaluation failures"
+            description: "One or more recording/alerting rule groups failed to evaluate in the last 15 minutes."
+
+        - alert: AlertmanagerConfigReloadFailed
+          expr: alertmanager_config_last_reload_successful{job="alertmanager-self"} == 0
+          for: 10m
+          labels:
+            severity: warning
+            component: platform
+          annotations:
+            summary: "Alertmanager config reload failing"
+            description: "alertmanager_config_last_reload_successful has been 0 for 10 minutes — check alertmanager-config-secret.yaml for a syntax error."
+
+        - alert: AlertmanagerMembersInconsistent
+          expr: |
+            count by (namespace) (alertmanager_cluster_members{job="alertmanager-self"})
+              != on(namespace) group_left
+            count by (namespace) (up{job="alertmanager-self"} == 1)
+          for: 10m
+          labels:
+            severity: warning
+            component: platform
+          annotations:
+            summary: "Alertmanager gossip cluster missing members"
+            description: "Not every up Alertmanager replica agrees on cluster membership — check for a network partition between the 3 replicas."

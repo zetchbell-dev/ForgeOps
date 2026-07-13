@@ -1,0 +1,51 @@
+# Alertmanager Operator CR. 3 replicas is sized for gossip-cluster quorum
+# (majority = 2 of 3) — see pdb.yaml's header comment for why
+# maxUnavailable: 1 there is the right ceiling given this replica count.
+# 5Gi / 120h retention are conservative base defaults — see README.md
+# "Scaling / overlay guidance"; patch in an overlay, don't edit here.
+apiVersion: monitoring.coreos.com/v1
+kind: Alertmanager
+metadata:
+  name: alertmanager
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/instance: forgeops
+    app.kubernetes.io/part-of: forgeops
+spec:
+  replicas: 3
+  retention: 120h
+  serviceAccountName: alertmanager
+
+  podMetadata:
+    labels:
+      app.kubernetes.io/name: alertmanager
+      app.kubernetes.io/instance: forgeops
+
+  # Fixed name the Operator expects for a CR named `alertmanager`:
+  # `alertmanager-<CR name>` → `alertmanager-alertmanager`. Must match
+  # alertmanager-config-secret.yaml's Secret name exactly.
+  configSecret: alertmanager-alertmanager
+
+  storage:
+    volumeClaimTemplate:
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault

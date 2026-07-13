@@ -1,0 +1,15 @@
+# Backs tempo-configmap.yaml's `local` storage backend (both /var/tempo/
+# traces and /var/tempo/wal live on this one volume — single-binary mode
+# has no separate WAL disk). 20Gi is a conservative base default, same
+# spirit as loki-pvc.yaml one directory up; patch in an overlay for
+# environments with heavier trace volume.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tempo-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi

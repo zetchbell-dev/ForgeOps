@@ -1,0 +1,78 @@
+# ASSUMPTION FLAG (same convention as servicemonitor-platform-self.yaml's
+# flag): `Parser cri` below assumes the node container runtime writes CRI
+# log format at /var/log/containers/*.log (true for containerd, the EKS
+# default on current AMIs per infrastructure/terraform/modules/eks). If
+# nodes ever run a different runtime/log format, switch the INPUT's
+# `Parser` to `docker` (defined below) and verify against
+# `kubectl logs` output shape on an actual node before deploying.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  labels:
+    app.kubernetes.io/name: fluent-bit
+    app.kubernetes.io/part-of: forgeops
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush          5
+        Log_Level      info
+        Daemon         off
+        Parsers_File   parsers.conf
+        HTTP_Server    On
+        HTTP_Listen    0.0.0.0
+        HTTP_Port      2020
+
+    [INPUT]
+        Name              tail
+        Tag                kube.*
+        Path               /var/log/containers/*.log
+        # Excludes Fluent Bit's own logs to prevent a self-ingestion
+        # feedback loop — Loki/Prometheus/Alertmanager logs ARE collected
+        # like any other workload's, deliberately not excluded, since
+        # their own logs matter during an incident investigation.
+        Exclude_Path       /var/log/containers/fluent-bit*.log
+        Parser             cri
+        DB                 /var/lib/fluent-bit/tail-db/pos.db
+        Mem_Buf_Limit      64MB
+        Skip_Long_Lines    On
+        Refresh_Interval   10
+
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Merge_Log           On
+        Merge_Log_Trim      On
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+        Annotations         Off
+        Labels              On
+
+    [OUTPUT]
+        Name            loki
+        Match           kube.*
+        Host            loki.monitoring.svc
+        Port            3100
+        Labels          job=fluent-bit
+        Label_Keys      $kubernetes['namespace_name'],$kubernetes['pod_name'],$kubernetes['container_name']
+        Auto_Kubernetes_Labels off
+        Line_Format     json
+        Remove_Keys     kubernetes,stream
+
+  parsers.conf: |
+    [PARSER]
+        Name        cri
+        Format      regex
+        Regex       ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<message>.*)$
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep   On

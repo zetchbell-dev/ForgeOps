@@ -1,0 +1,36 @@
+# otel-collector's own runtime RBAC — read-only access the
+# `k8sattributes` processor (otel-collector-configmap.yaml) needs to
+# enrich incoming spans with pod/namespace/deployment metadata by looking
+# up the calling pod's IP against the K8s API. Not the fluent-bit
+# ClusterRole above and not Prometheus's rbac.yaml above either — every
+# workload here that talks to the K8s API gets its own narrowly-scoped
+# ClusterRole rather than sharing one.
+# Cluster-scoped: kustomize's `namespace: monitoring` transformer leaves
+# ClusterRole/ClusterRoleBinding alone (same pattern as ../rbac.yaml).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: forgeops-otel-collector
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - namespaces
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - replicasets
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: forgeops-otel-collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: forgeops-otel-collector
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: monitoring

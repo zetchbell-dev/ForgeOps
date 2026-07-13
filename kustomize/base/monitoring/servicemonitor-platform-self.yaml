@@ -1,0 +1,46 @@
+# Platform self-monitoring: scrapes Prometheus's and Alertmanager's own
+# `/metrics` via the governing Services the Operator creates for every
+# Prometheus/Alertmanager CR (`<statefulset-name>-operated`, fixed
+# `prometheus-operated` / `alertmanager-operated` regardless of the CR's
+# own `metadata.name` — see prometheus.yaml's `alerting.alertmanagers`
+# comment for the same fixed-name behavior).
+#
+# ASSUMPTION FLAG: the `operated-prometheus: "true"` / `operated-
+# alertmanager: "true"` labels below are what the Operator stamps onto
+# those governing Services as of the versions this repo has been
+# developed against — not yet confirmed against whatever Operator version
+# actually gets installed in-cluster (README.md prerequisite #1). If a
+# `kubectl get svc -n monitoring --show-labels` after install doesn't
+# show these, update the selector here rather than assume scraping is
+# silently working.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: prometheus-self
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: forgeops
+spec:
+  selector:
+    matchLabels:
+      operated-prometheus: "true"
+  endpoints:
+    - port: web
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: alertmanager-self
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/part-of: forgeops
+spec:
+  selector:
+    matchLabels:
+      operated-alertmanager: "true"
+  endpoints:
+    - port: web
+      path: /metrics
+      interval: 30s

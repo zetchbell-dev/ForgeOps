@@ -1,0 +1,52 @@
+# Recording rules pre-aggregating Phase 1's raw auth-service metrics
+# (internal/observability/metrics/metrics.go) into the exact series names
+# Phase 3's `configmap-dashboards-auth-service.yaml` queries by name —
+# every `auth_service:*` name below matches a panel `expr` there verbatim.
+# `by (environment, ...)` on every rule preserves the `environment` label
+# servicemonitor-auth-service.yaml's relabeling attaches at scrape time
+# (raw metrics carry no environment label of their own).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: auth-service-recording
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: forgeops
+    role: recording-rules
+spec:
+  groups:
+    - name: auth-service.recording
+      interval: 30s
+      rules:
+        - record: auth_service:http_requests:rate5m
+          expr: sum by (environment, method, path, status) (rate(http_requests_total{job="auth-service"}[5m]))
+
+        - record: auth_service:http_error_ratio:rate5m
+          expr: |
+            sum by (environment) (rate(http_requests_total{job="auth-service",status=~"5.."}[5m]))
+              /
+            sum by (environment) (rate(http_requests_total{job="auth-service"}[5m]))
+
+        - record: auth_service:http_request_duration_seconds:p50
+          expr: histogram_quantile(0.50, sum by (environment, method, path, le) (rate(http_request_duration_seconds_bucket{job="auth-service"}[5m])))
+
+        - record: auth_service:http_request_duration_seconds:p90
+          expr: histogram_quantile(0.90, sum by (environment, method, path, le) (rate(http_request_duration_seconds_bucket{job="auth-service"}[5m])))
+
+        - record: auth_service:http_request_duration_seconds:p99
+          expr: histogram_quantile(0.99, sum by (environment, method, path, le) (rate(http_request_duration_seconds_bucket{job="auth-service"}[5m])))
+
+        - record: auth_service:token_verify_duration_seconds:p99
+          expr: histogram_quantile(0.99, sum by (environment, le) (rate(auth_token_verify_duration_seconds_bucket{job="auth-service"}[5m])))
+
+        - record: auth_service:login_attempts:rate5m
+          expr: sum by (environment, result) (rate(auth_login_attempts_total{job="auth-service"}[5m]))
+
+        - record: auth_service:login_failure_ratio:rate5m
+          expr: |
+            sum by (environment) (rate(auth_login_attempts_total{job="auth-service",result!="success"}[5m]))
+              /
+            sum by (environment) (rate(auth_login_attempts_total{job="auth-service"}[5m]))
+
+        - record: auth_service:active_refresh_tokens:sum
+          expr: sum by (environment) (auth_active_refresh_tokens{job="auth-service"})

@@ -1,0 +1,15 @@
+# Backs /var/lib/grafana: the sqlite DB (dashboards, users, folders, star
+# state) plus installed plugins. 10Gi is generous headroom for a sqlite
+# database that in practice stays in the tens-of-MB range even with a few
+# hundred dashboards — sized for plugin growth, not DB growth. Bump via
+# an overlay patch if a production environment needs more, same pattern
+# as prometheus.yaml's storage sizing.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi

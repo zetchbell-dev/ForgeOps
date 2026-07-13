@@ -58,5 +58,13 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.metrics != nil {
+		// Mirrors login_handler.go's IncActiveRefreshTokens on the
+		// revoke side. Same known limitation applies: a token that
+		// expires naturally (never explicitly logged out) is never
+		// decremented — see auth_active_refresh_tokens' Help text.
+		h.metrics.DecActiveRefreshTokens()
+	}
+
 	WriteData(w, http.StatusOK, logoutResponseData{Revoked: true})
 }

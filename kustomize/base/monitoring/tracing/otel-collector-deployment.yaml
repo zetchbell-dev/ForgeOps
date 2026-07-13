@@ -1,0 +1,82 @@
+# Single replica by design for this phase: the commented tail_sampling
+# processor in otel-collector-configmap.yaml explicitly requires a
+# load-balancing exporter/receiver pair to shard by trace ID across
+# replicas correctly — not implemented here. Scale past 1 replica only
+# after that's added; a naive N-replica rollout with only the current
+# `batch` pipeline is safe (stateless forwarding) but gives no
+# additional benefit until then, since each pod's own OTLP receiver load
+# balancer entry (the Service below) simply round-robins by connection,
+# splitting a single trace's spans across replicas harmlessly today but
+# *incorrectly* once tail_sampling needs every span of one trace on one
+# replica to make a keep/drop decision.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/instance: forgeops
+    app.kubernetes.io/part-of: forgeops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+      app.kubernetes.io/instance: forgeops
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel-collector
+        app.kubernetes.io/instance: forgeops
+        app.kubernetes.io/part-of: forgeops
+    spec:
+      serviceAccountName: otel-collector
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: otel-collector
+          # Contrib distribution, not otel/opentelemetry-collector: the
+          # base collector image doesn't ship the k8sattributes processor
+          # this config uses.
+          image: otel/opentelemetry-collector-contrib:0.114.0
+          args:
+            - "--config=/etc/otel-collector/config.yaml"
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
+            - name: health
+              containerPort: 13133
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel-collector
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-config

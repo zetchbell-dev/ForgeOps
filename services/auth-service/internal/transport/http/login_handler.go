@@ -1,8 +1,11 @@
 package http
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/enterprise-cicd-platform/auth-service/internal/domain"
+	obsmetrics "github.com/enterprise-cicd-platform/auth-service/internal/observability/metrics"
 	"github.com/enterprise-cicd-platform/auth-service/internal/usecase"
 )
 
@@ -39,8 +42,21 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		Password:        req.Password,
 	})
 	if err != nil {
+		if h.metrics != nil {
+			h.metrics.ObserveLoginAttempt(loginResultForError(err))
+		}
 		WriteError(w, r, err)
 		return
+	}
+
+	if h.metrics != nil {
+		h.metrics.ObserveLoginAttempt(obsmetrics.LoginResultSuccess)
+		// A successful login always issues exactly one new refresh
+		// token (see usecase.Login.Execute) — see
+		// auth_active_refresh_tokens' Help text (metrics.go) for this
+		// gauge's known limitations (in-process, not reconciled
+		// against Postgres).
+		h.metrics.IncActiveRefreshTokens()
 	}
 
 	WriteData(w, http.StatusOK, loginResponseData{
@@ -48,4 +64,28 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		AccessToken:    out.AccessToken,
 		RefreshTokenID: out.RefreshTokenID,
 	})
+}
+
+// loginResultForError maps a usecase.Login.Execute error to one of
+// metrics.LoginResult* (M5 §3's auth_login_attempts_total labels).
+// Matching is by errors.Is against the same domain sentinels
+// errors.go's mapDomainError already uses for the HTTP response, so the
+// two mappings can't silently drift apart for the errors they share.
+// Anything not in domainErrorMapping (domain.ErrInternal, or an error
+// that reaches here unwrapped) becomes LoginResultError — a genuinely
+// different outcome from a client-facing 4xx, per metrics.go's package
+// doc comment.
+func loginResultForError(err error) string {
+	switch {
+	case errors.Is(err, domain.ErrInvalidCredentials):
+		return obsmetrics.LoginResultInvalidCredentials
+	case errors.Is(err, domain.ErrAccountLocked):
+		return obsmetrics.LoginResultLocked
+	case errors.Is(err, domain.ErrAccountDisabled):
+		return obsmetrics.LoginResultDisabled
+	case errors.Is(err, domain.ErrRateLimited):
+		return obsmetrics.LoginResultRateLimited
+	default:
+		return obsmetrics.LoginResultError
+	}
 }

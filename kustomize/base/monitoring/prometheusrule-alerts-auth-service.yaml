@@ -1,0 +1,72 @@
+# Alert names referenced elsewhere and must match exactly:
+# - alertmanager-config-secret.yaml's inhibit rule (source AuthServiceDown,
+#   target AuthServiceHigh.*)
+# - `severity`/`component` labels are what Phase 3's
+#   `configmap-dashboards-alerts.yaml` groups the raw ALERTS series by
+#   (`sum by (severity) (...)`, `sum by (component) (...)`) — every alert
+#   below carries both.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: auth-service-alerts
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: forgeops
+    role: alert-rules
+spec:
+  groups:
+    - name: auth-service.alerts
+      rules:
+        - alert: AuthServiceDown
+          expr: up{job="auth-service"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            component: auth-service
+          annotations:
+            summary: "auth-service target down ({{ $labels.environment }})"
+            description: "Prometheus has not been able to scrape auth-service (namespace {{ $labels.namespace }}) for 2 minutes."
+
+        - alert: AuthServiceHighErrorRate
+          expr: auth_service:http_error_ratio:rate5m > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            component: auth-service
+          annotations:
+            summary: "auth-service 5xx ratio above 5% ({{ $labels.environment }})"
+            description: "auth_service:http_error_ratio:rate5m has been above 0.05 for 5 minutes in {{ $labels.environment }}."
+
+        - alert: AuthServiceHighLatency
+          expr: auth_service:http_request_duration_seconds:p99 > 0.5
+          for: 5m
+          labels:
+            severity: warning
+            component: auth-service
+          annotations:
+            summary: "auth-service p99 latency above 500ms ({{ $labels.environment }})"
+            description: "auth_service:http_request_duration_seconds:p99 has been above 0.5s for 5 minutes in {{ $labels.environment }}."
+
+        - alert: AuthServiceVerifyLatencyHigh
+          expr: auth_service:token_verify_duration_seconds:p99 > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            component: auth-service
+          annotations:
+            summary: "GET /v1/auth/verify p99 above the 50ms SLO ({{ $labels.environment }})"
+            description: "M5 Phase 1's documented p99 < 50ms SLO for /v1/auth/verify has been breached for 5 minutes in {{ $labels.environment }}."
+
+        # KNOWN GAP (see VALIDATION.md §5): depends on
+        # kube_pod_container_status_restarts_total, which requires
+        # kube-state-metrics — not deployed by any file in this
+        # directory. Valid rule, will not fire until that's added.
+        - alert: AuthServicePodCrashLooping
+          expr: increase(kube_pod_container_status_restarts_total{namespace=~"auth-service-.*", container="auth-service"}[15m]) > 3
+          for: 5m
+          labels:
+            severity: critical
+            component: auth-service
+          annotations:
+            summary: "auth-service pod restarting repeatedly ({{ $labels.namespace }}/{{ $labels.pod }})"
+            description: "{{ $labels.pod }} in {{ $labels.namespace }} has restarted more than 3 times in the last 15 minutes."

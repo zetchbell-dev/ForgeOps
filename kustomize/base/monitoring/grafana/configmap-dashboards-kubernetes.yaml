@@ -1,0 +1,74 @@
+# Kubernetes cluster dashboard. Panels depend on node-exporter and
+# kube-state-metrics, neither of which is deployed by this repository yet
+# (same gap already flagged in prometheusrule-alerts-auth-service.yaml's
+# AuthServicePodCrashLooping alert) — panels will show "No data" until
+# those exporters are added, not broken.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-kubernetes
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: forgeops
+    grafana_dashboard: "1"
+data:
+  kubernetes.json: |
+    {
+      "id": null,
+      "uid": "k8s-cluster-overview",
+      "title": "Kubernetes Cluster Overview",
+      "tags": ["forgeops", "kubernetes", "m5"],
+      "timezone": "utc",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Node CPU Utilization",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+          "targets": [
+            { "expr": "1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))", "legendFormat": "{{instance}}" }
+          ],
+          "description": "Requires node-exporter. Not deployed by this repository yet — panel will show \"No data\" until it is."
+        },
+        {
+          "id": 2,
+          "title": "Node Memory Available",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+          "targets": [
+            { "expr": "node_memory_MemAvailable_bytes", "legendFormat": "{{instance}}" }
+          ],
+          "description": "Requires node-exporter. Not deployed by this repository yet."
+        },
+        {
+          "id": 3,
+          "title": "Pod Restarts (15m)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "increase(kube_pod_container_status_restarts_total[15m])", "legendFormat": "{{namespace}}/{{pod}}" }
+          ],
+          "description": "Requires kube-state-metrics. Not deployed by this repository yet — same gap flagged in prometheusrule-alerts-auth-service.yaml's AuthServicePodCrashLooping alert."
+        },
+        {
+          "id": 4,
+          "title": "Pods Not Ready",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum(kube_pod_status_ready{condition=\"false\"})", "legendFormat": "not ready" }
+          ],
+          "description": "Requires kube-state-metrics."
+        }
+      ]
+    }

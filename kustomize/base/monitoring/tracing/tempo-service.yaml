@@ -1,0 +1,29 @@
+# Name is load-bearing: otel-collector-configmap.yaml's `otlp/tempo`
+# exporter already targets `tempo.monitoring.svc:4317`, and
+# grafana/configmap-datasources.yaml's Tempo datasource targets
+# `tempo.monitoring.svc:3200` — both confirmed against this Service's
+# name and ports below, same pattern logging/loki-service.yaml's header
+# comment follows for Loki.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  labels:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/instance: forgeops
+    app.kubernetes.io/part-of: forgeops
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/instance: forgeops
+  ports:
+    - name: http
+      port: 3200
+      targetPort: http
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http

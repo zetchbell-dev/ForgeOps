@@ -1,0 +1,58 @@
+# Alerts overview dashboard: raw ALERTS series grouped by severity/
+# component. Complements Alertmanager's own UI (which groups by
+# alertname/namespace per alertmanager-config-secret.yaml's `group_by`)
+# with a Grafana-native view alongside the other dashboards.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-alerts
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: forgeops
+    grafana_dashboard: "1"
+data:
+  alerts.json: |
+    {
+      "id": null,
+      "uid": "forgeops-alerts-overview",
+      "title": "Alerts Overview",
+      "tags": ["forgeops", "alerts", "m5"],
+      "timezone": "utc",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": { "from": "now-6h", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Currently Firing Alerts",
+          "type": "table",
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "ALERTS{alertstate=\"firing\"}", "format": "table", "instant": true }
+          ],
+          "description": "Raw ALERTS series from Prometheus (not Alertmanager's grouped view — this shows every firing alert instance, including ones still within Alertmanager's group_wait)."
+        },
+        {
+          "id": 2,
+          "title": "Firing Alerts by Severity",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum by (severity) (ALERTS{alertstate=\"firing\"})", "legendFormat": "{{severity}}" }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Firing Alerts by Component",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sum by (component) (ALERTS{alertstate=\"firing\"})", "legendFormat": "{{component}}" }
+          ]
+        }
+      ]
+    }

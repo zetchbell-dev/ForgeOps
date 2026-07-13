@@ -26,7 +26,15 @@ func (h *Handlers) Verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	out, err := h.verify.Execute(r.Context(), usecase.VerifyTokenInput{AccessToken: token})
+	if h.metrics != nil {
+		// Recorded for both success and failure — M5 §4's p99<50ms SLO
+		// is about this endpoint's latency generally, not just the
+		// happy path (a slow rejection is still a slow verify call
+		// from Gateway's perspective).
+		h.metrics.ObserveTokenVerifyDuration(time.Since(start))
+	}
 	if err != nil {
 		WriteError(w, r, err)
 		return

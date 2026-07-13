@@ -1,0 +1,14 @@
+# Backs /var/loki: tsdb index + filesystem chunks + compactor working
+# dir. 50Gi matches prometheus.yaml's storage sizing for parity of
+# retention windows (both 360h/15d) — logs are typically higher-volume
+# per byte than metrics, so revisit this before assuming it's
+# conservative the way Grafana's 10Gi is.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: loki-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 50Gi

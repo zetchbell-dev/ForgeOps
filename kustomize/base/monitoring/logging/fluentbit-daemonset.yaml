@@ -1,0 +1,91 @@
+# DaemonSet, not Deployment: one Fluent Bit instance per node, each
+# reading that node's own /var/log/containers via hostPath — this is a
+# structural requirement of node-level log collection, not a scaling
+# choice like Loki/Grafana's replicas: 1 above.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  labels:
+    app.kubernetes.io/name: fluent-bit
+    app.kubernetes.io/instance: forgeops
+    app.kubernetes.io/part-of: forgeops
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fluent-bit
+      app.kubernetes.io/instance: forgeops
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fluent-bit
+        app.kubernetes.io/instance: forgeops
+        app.kubernetes.io/part-of: forgeops
+    spec:
+      serviceAccountName: fluent-bit
+      # DEPARTURE FROM THIS REPO'S USUAL runAsNonRoot CONVENTION
+      # (Prometheus/Alertmanager/Grafana/Loki all run non-root): reading
+      # /var/log/containers on arbitrary node images reliably requires
+      # root, since file ownership/permissions there vary by node AMI and
+      # aren't something this repo controls. Documented here rather than
+      # silently deviating from the pattern established elsewhere.
+      securityContext:
+        runAsUser: 0
+        runAsNonRoot: false
+      tolerations:
+        # A logging DaemonSet must run everywhere, including control-plane
+        # nodes if they're schedulable and any node marked NotReady/
+        # unreachable during a network blip — the two most common
+        # taints that would otherwise silently create blind spots in log
+        # coverage right when they matter most (a node in trouble).
+        - key: node-role.kubernetes.io/control-plane
+          effect: NoSchedule
+        - key: node.kubernetes.io/not-ready
+          effect: NoExecute
+          operator: Exists
+        - key: node.kubernetes.io/unreachable
+          effect: NoExecute
+          operator: Exists
+      containers:
+        - name: fluent-bit
+          image: fluent/fluent-bit:3.1.9
+          ports:
+            - name: metrics
+              containerPort: 2020
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc
+              readOnly: true
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: varlogpods
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: positiondb
+              mountPath: /var/lib/fluent-bit/tail-db
+      volumes:
+        - name: config
+          configMap:
+            name: fluent-bit-config
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: varlogpods
+          # CRI runtimes (containerd) write actual log files under
+          # /var/log/pods/, with /var/log/containers/*.log as symlinks
+          # into it — both have to be mounted or the tail INPUT's target
+          # files resolve to broken symlinks inside the container.
+          hostPath:
+            path: /var/log/pods
+        - name: positiondb
+          hostPath:
+            path: /var/lib/fluent-bit/tail-db
+            type: DirectoryOrCreate

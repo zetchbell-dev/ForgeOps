@@ -1,0 +1,130 @@
+# Auth Service dashboard JSON, provisioned into the 'Auth Service' folder
+# (see configmap-dashboard-provisioning.yaml). Queries reference the
+# recording rules from kustomize/base/monitoring/prometheusrule-recording-auth-service.yaml
+# — keep the two in sync if a recording rule is ever renamed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-auth-service
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/part-of: forgeops
+    grafana_dashboard: "1"
+data:
+  auth-service.json: |
+    {
+      "id": null,
+      "uid": "auth-service-overview",
+      "title": "Auth Service Overview",
+      "tags": ["forgeops", "auth-service", "m5"],
+      "timezone": "utc",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": { "from": "now-1h", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "environment",
+            "type": "query",
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "query": "label_values(auth_service:http_requests:rate5m, environment)",
+            "refresh": 2,
+            "multi": false,
+            "includeAll": false
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Request Rate (by status)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum by (status) (auth_service:http_requests:rate5m{environment=\"$environment\"})",
+              "legendFormat": "{{status}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "5xx Error Ratio",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 0.05 }
+          ] } }, "overrides": [] },
+          "targets": [
+            {
+              "expr": "auth_service:http_error_ratio:rate5m{environment=\"$environment\"}",
+              "legendFormat": "{{method}} {{path}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "HTTP Latency Percentiles (all routes)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            { "expr": "auth_service:http_request_duration_seconds:p50{environment=\"$environment\"}", "legendFormat": "p50 {{method}} {{path}}" },
+            { "expr": "auth_service:http_request_duration_seconds:p90{environment=\"$environment\"}", "legendFormat": "p90 {{method}} {{path}}" },
+            { "expr": "auth_service:http_request_duration_seconds:p99{environment=\"$environment\"}", "legendFormat": "p99 {{method}} {{path}}" }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "GET /v1/auth/verify p99 vs 50ms SLO",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            { "expr": "auth_service:token_verify_duration_seconds:p99{environment=\"$environment\"}", "legendFormat": "p99 verify latency" },
+            { "expr": "0.05", "legendFormat": "50ms SLO" }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Login Attempts (by result)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "auth_service:login_attempts:rate5m{environment=\"$environment\"}", "legendFormat": "{{result}}" }
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Login Failure Ratio",
+          "type": "gauge",
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1, "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 0.2 },
+            { "color": "red", "value": 0.5 }
+          ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "auth_service:login_failure_ratio:rate5m{environment=\"$environment\"}", "legendFormat": "failure ratio" }
+          ]
+        },
+        {
+          "id": 7,
+          "title": "Active Refresh Tokens",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "auth_service:active_refresh_tokens:sum{environment=\"$environment\"}", "legendFormat": "active sessions" }
+          ]
+        }
+      ]
+    }

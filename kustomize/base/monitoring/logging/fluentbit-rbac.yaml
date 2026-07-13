@@ -1,0 +1,28 @@
+# Cluster-scoped for the same structural reason as rbac.yaml's Prometheus
+# ClusterRole: Fluent Bit runs as a DaemonSet collecting logs from pods
+# across every namespace (auth-service-dev/staging/prod and beyond), not
+# just `monitoring`, so its metadata lookups need to resolve pods
+# cluster-wide. Read-only, no write/delete/exec verbs anywhere.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: forgeops-fluent-bit
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - pods
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: forgeops-fluent-bit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: forgeops-fluent-bit
+subjects:
+  - kind: ServiceAccount
+    name: fluent-bit
+    namespace: monitoring

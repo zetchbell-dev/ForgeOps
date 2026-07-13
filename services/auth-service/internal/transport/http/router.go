@@ -12,20 +12,38 @@ import (
 // its own Dockerfile/Helm chart out to M3-M5, but the service still has to
 // expose something a liveness/readiness probe can hit once those
 // milestones wire it up — this is that endpoint, not the probe config
-// itself).
+// itself), plus /metrics for Prometheus scraping (M5 Phase 1).
 //
 // chimiddleware.Recoverer is chi's own panic recovery — kept as-is rather
 // than reimplemented, since M2 doesn't specify custom panic-response
 // shape and a 500/INTERNAL_ERROR envelope from a recovered panic is no
 // different from any other unmapped error reaching WriteError.
-func NewRouter(h *Handlers) http.Handler {
+//
+// obsMiddleware and metricsHandler are both optional (nil-safe) so this
+// signature change doesn't force every existing/future caller to opt
+// into observability: obsMiddleware is
+// internal/observability/httpmw.New's return value (records
+// http_requests_total/http_request_duration_seconds, starts a trace
+// span, and access-logs every request — M5 §3/§6/§7), and
+// metricsHandler is promhttp.HandlerFor(reg, ...) built by the caller
+// (cmd/server/main.go) so this package never has to import
+// prometheus/promhttp itself. obsMiddleware is mounted after
+// RequestIDMiddleware/Recoverer, so a request ID is already on the
+// context and a recovered panic's own response is still captured by it.
+func NewRouter(h *Handlers, obsMiddleware func(http.Handler) http.Handler, metricsHandler http.Handler) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(RequestIDMiddleware)
 	r.Use(chimiddleware.Recoverer)
+	if obsMiddleware != nil {
+		r.Use(obsMiddleware)
+	}
 
 	r.Get("/healthz", HealthCheck)
 	r.Get("/readyz", HealthCheck)
+	if metricsHandler != nil {
+		r.Handle("/metrics", metricsHandler)
+	}
 
 	r.Route("/v1/auth", func(r chi.Router) {
 		r.Post("/register", h.Register)

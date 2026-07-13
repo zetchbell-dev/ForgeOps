@@ -1,0 +1,104 @@
+# OTLP receiver on both HTTP (4318) and gRPC (4317): Phase 1's
+# tracing.go exports via `otlptracehttp` (see its package doc — HTTP was
+# the deliberate choice there, no code change needed to point
+# OTEL_EXPORTER_OTLP_ENDPOINT at this Collector). gRPC is enabled
+# alongside it for any future service that instruments with the gRPC
+# exporter instead — this Collector doesn't care which one a given
+# service uses, and running both costs nothing idle.
+#
+# Sampling: head-based sampling already happens inside each service's
+# own SDK (tracing.go's `sdktrace.ParentBased(sdktrace.
+# TraceIDRatioBased(cfg.SampleRatio))` — M5 §7: 100% dev/staging, a
+# tuned lower ratio in prod). This Collector deliberately does NOT run a
+# second probabilistic sampler on top of that — stacking two independent
+# samplers multiplies their ratios (e.g. 0.5 SDK x 0.5 Collector = 0.25
+# effective, not obviously derivable from either config alone) and one
+# certified place to change the sampling rate (the SDK Config) is more
+# maintainable than two. A `tail_sampling` processor (keep-if-error/
+# keep-if-slow policies that a head sampler structurally cannot express)
+# is left commented below as the documented future upgrade path once
+# real traffic volume in prod justifies retaining 100% of "interesting"
+# traces and dropping more of the rest.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/part-of: forgeops
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 20
+
+      # Enriches every span with k8s.pod.name / k8s.namespace.name /
+      # k8s.deployment.name by looking up the sending pod's IP against
+      # the API (rbac.yaml above). association based on the connection's
+      # source IP, which is correct for a Collector reached in-cluster
+      # via ClusterIP Service (this Collector's own service.yaml) — spans
+      # arrive from the exporting pod directly, not through a proxy that
+      # would obscure the real source IP.
+      k8sattributes:
+        auth_type: serviceAccount
+        extract:
+          metadata:
+            - k8s.pod.name
+            - k8s.namespace.name
+            - k8s.deployment.name
+            - k8s.node.name
+
+      batch:
+        timeout: 5s
+        send_batch_size: 1024
+
+      # --- Future upgrade path: tail-based sampling ---
+      # Uncomment and add to the traces pipeline (before `batch`) once
+      # prod traffic volume makes 100%-retained head sampling too
+      # expensive to store. Requires multiple Collector replicas to
+      # share a `load_balancing` exporter/receiver pair upstream so every
+      # span of a given trace ID lands on the same tail-sampling
+      # instance — not wired here since this phase runs a single
+      # Collector replica (see otel-collector-deployment.yaml).
+      # tail_sampling:
+      #   decision_wait: 10s
+      #   policies:
+      #     - name: keep-errors
+      #       type: status_code
+      #       status_code: { status_codes: [ERROR] }
+      #     - name: keep-slow
+      #       type: latency
+      #       latency: { threshold_ms: 500 }
+      #     - name: sample-rest
+      #       type: probabilistic
+      #       probabilistic: { sampling_percentage: 10 }
+
+    exporters:
+      otlp/tempo:
+        endpoint: tempo.monitoring.svc:4317
+        tls:
+          insecure: true
+
+    # health_check backs otel-collector-deployment.yaml's readiness/
+    # liveness probes (port 13133, default path `/`).
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, batch]
+          exporters: [otlp/tempo]

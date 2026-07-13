@@ -1,0 +1,11 @@
+# Cluster-scoped — kustomize's `namespace: monitoring` transformer (see
+# kustomization.yaml) leaves this alone, same as rbac.yaml's ClusterRole/
+# ClusterRoleBinding. Everything else in this directory is created inside
+# the namespace this Namespace object defines.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: forgeops
+    app.kubernetes.io/managed-by: kustomize

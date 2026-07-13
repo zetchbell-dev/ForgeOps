@@ -21,6 +21,7 @@ type Config struct {
 	Redis    RedisConfig
 	JWT      JWTConfig
 	Bcrypt   BcryptConfig
+	Tracing  TracingConfig
 }
 
 // ServerConfig controls the HTTP listener and shutdown behavior.
@@ -59,6 +60,26 @@ type BcryptConfig struct {
 	Cost int
 }
 
+// TracingConfig maps onto tracing.Config's fields (M5 §7), same
+// package-isolation reasoning as RedisConfig/JWTConfig — main.go does the
+// translation into internal/observability/tracing.Config at the wiring
+// point, so config has no dependency on that package either.
+type TracingConfig struct {
+	// OTLPEndpoint is the OTLP/HTTP collector endpoint. Empty (the
+	// default — no env var required) means tracing stays a no-op; see
+	// internal/observability/tracing's package doc comment for why that
+	// is this milestone's deliberate default rather than an oversight.
+	OTLPEndpoint string
+	// Insecure disables TLS to the collector. Defaults to true (an
+	// in-cluster collector, no TLS) since that's the only deployment
+	// shape M5's design doc describes.
+	Insecure bool
+	// SampleRatio is the head-based sampling probability in [0,1].
+	// Defaults to 1.0 (100%) — M5 §7's dev/staging value; production
+	// overrides via env once real traffic volume is known.
+	SampleRatio float64
+}
+
 // Defaults. Only values with a genuinely safe, non-secret default get
 // one; anything security- or environment-specific (DSN, signing key)
 // has no default and is required.
@@ -73,6 +94,13 @@ const (
 	// free of infrastructure-package dependencies; the two are expected
 	// to be kept in sync deliberately, not automatically.
 	defaultBcryptCost = 12
+	// defaultTracingInsecure/defaultTracingSampleRatio are TracingConfig's
+	// defaults (M5 §7: 100% sampling in dev/staging; an in-cluster
+	// collector needs no TLS). OTEL_EXPORTER_OTLP_ENDPOINT itself has no
+	// default — empty is the deliberate "tracing disabled" state, see
+	// TracingConfig's doc comment.
+	defaultTracingInsecure    = true
+	defaultTracingSampleRatio = 1.0
 )
 
 // Load reads Config from the environment and validates it. It returns an
@@ -93,6 +121,14 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	bcryptCost, err := intEnv("BCRYPT_COST", defaultBcryptCost)
+	if err != nil {
+		return Config{}, err
+	}
+	tracingInsecure, err := boolEnv("OTEL_EXPORTER_OTLP_INSECURE", defaultTracingInsecure)
+	if err != nil {
+		return Config{}, err
+	}
+	tracingSampleRatio, err := float64Env("OTEL_TRACES_SAMPLE_RATIO", defaultTracingSampleRatio)
 	if err != nil {
 		return Config{}, err
 	}
@@ -117,6 +153,11 @@ func Load() (Config, error) {
 		},
 		Bcrypt: BcryptConfig{
 			Cost: bcryptCost,
+		},
+		Tracing: TracingConfig{
+			OTLPEndpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+			Insecure:     tracingInsecure,
+			SampleRatio:  tracingSampleRatio,
 		},
 	}
 
@@ -174,6 +215,30 @@ func durationEnv(key string, def time.Duration) (time.Duration, error) {
 	v, err := time.ParseDuration(raw)
 	if err != nil {
 		return 0, fmt.Errorf("config: %s=%q is not a valid duration: %w", key, raw, err)
+	}
+	return v, nil
+}
+
+func boolEnv(key string, def bool) (bool, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return def, nil
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("config: %s=%q is not a valid boolean: %w", key, raw, err)
+	}
+	return v, nil
+}
+
+func float64Env(key string, def float64) (float64, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return def, nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s=%q is not a valid float: %w", key, raw, err)
 	}
 	return v, nil
 }

@@ -1,0 +1,74 @@
+# Prometheus Operator CR. Requires the Operator + CRDs pre-installed
+# (README.md prerequisite #1) — this object alone does nothing until the
+# Operator reconciles it into a StatefulSet.
+#
+# 2 replicas / 50Gi / 15d retention are intentionally conservative base
+# defaults (see README.md "Scaling / overlay guidance") — patch storage
+# size or retention in an environment overlay rather than editing this
+# file directly.
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: forgeops
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: forgeops
+    app.kubernetes.io/part-of: forgeops
+spec:
+  replicas: 2
+  retention: 15d
+  serviceAccountName: prometheus
+
+  # podMetadata.labels are what pdb.yaml's PodDisruptionBudget selector
+  # matches against — see pdb.yaml's header comment for why only these
+  # two labels (not the Operator's own additional labels) are selected on.
+  podMetadata:
+    labels:
+      app.kubernetes.io/name: prometheus
+      app.kubernetes.io/instance: forgeops
+
+  # Empty selectors = select ServiceMonitors/PodMonitors/PrometheusRules
+  # across all namespaces this Prometheus has RBAC to read (rbac.yaml
+  # above), not just `monitoring`. auth-service's ServiceMonitor lives in
+  # this directory (servicemonitor-auth-service.yaml) but its
+  # namespaceSelector targets the auth-service-{dev,staging,prod}
+  # namespaces where the actual Service objects run.
+  serviceMonitorSelector: {}
+  serviceMonitorNamespaceSelector: {}
+  podMonitorSelector: {}
+  podMonitorNamespaceSelector: {}
+  ruleSelector: {}
+  ruleNamespaceSelector: {}
+
+  storage:
+    volumeClaimTemplate:
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 50Gi
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+
+  # Fixed governing-Service name the Operator creates for any Alertmanager
+  # CR named `alertmanager` in this namespace — not parameterized by the
+  # CR's own name. See alertmanager.yaml.
+  alerting:
+    alertmanagers:
+      - name: alertmanager-operated
+        namespace: monitoring
+        port: web
