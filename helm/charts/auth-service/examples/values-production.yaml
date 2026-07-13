@@ -1,0 +1,80 @@
+# Example values for a production install.
+# helm install auth-service ./charts/auth-service -f examples/values-production.yaml -n auth-prod
+#
+# NOTE: in the actual GitOps flow (M4 Phase 2/3), this chart is rendered
+# once at chart-authoring/build time into the manifest repo's base/
+# manifests — ArgoCD does not run `helm install` against this chart
+# directly in prod. This file documents the values that build step uses.
+
+replicaCount: 3
+
+image:
+  repository: ghcr.io/enterprise-cicd-platform/auth-service
+  tag: "" # set explicitly per release; never left as "latest"
+  pullPolicy: IfNotPresent
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+resources:
+  limits:
+    cpu: "1"
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+  hosts:
+    - host: auth.forgeops.internal
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: auth-service-prod-tls
+      hosts:
+        - auth.forgeops.internal
+
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/auth-service-prod
+
+# REQUIRED in production: reference a Secret managed out-of-band (External
+# Secrets Operator / Sealed Secrets / SOPS), never chart-templated literals.
+secrets:
+  existingSecret: auth-service-prod-credentials
+  existingSecretKeys:
+    postgresDSN: POSTGRES_DSN
+    jwtSigningKey: JWT_SIGNING_KEY
+    redisPassword: REDIS_PASSWORD
+
+config:
+  redisAddr: "auth-service-redis-master.auth-prod.svc.cluster.local:6379"
+  bcryptCost: "12"
+  jwtAccessTokenTTL: "15m"
+
+networkPolicy:
+  enabled: true
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: auth-service
+        app.kubernetes.io/instance: auth-service

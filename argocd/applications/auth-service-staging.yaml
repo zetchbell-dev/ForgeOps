@@ -1,0 +1,42 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: auth-service-staging
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: forgeops
+    environment: staging
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: forgeops
+
+  source:
+    repoURL: https://github.com/enterprise-cicd-platform/ForgeOps
+    targetRevision: main
+    path: kustomize/overlays/staging/auth-service
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: auth-service-staging
+
+  # Auto-sync is safe here: the tag this overlay points at only ever moves
+  # via a promotion PR that already required review + a green dev soak
+  # (see kustomization.yaml's image comment) — ArgoCD just applies what
+  # Git says, it isn't the approval gate itself.
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+
+  revisionHistoryLimit: 10

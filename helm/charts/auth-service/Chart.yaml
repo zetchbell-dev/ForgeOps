@@ -1,0 +1,16 @@
+apiVersion: v2
+name: auth-service
+description: ForgeOps Auth Service — production Helm chart (M2 service, chart authored under M4 GitOps milestone)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+home: https://github.com/enterprise-cicd-platform/ForgeOps
+sources:
+  - https://github.com/enterprise-cicd-platform/ForgeOps
+keywords:
+  - auth
+  - authentication
+  - forgeops
+maintainers:
+  - name: ForgeOps Platform Team

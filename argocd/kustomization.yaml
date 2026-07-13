@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Bootstrap-only: applied once (kubectl apply -k argocd/) against a cluster
+# that already has the Argo CD and Argo Rollouts controllers installed.
+# This is intentionally NOT itself managed by an Argo CD Application
+# (avoids the "who deploys the deployer" problem) — it's applied directly
+# via the platform's Terraform/CI bootstrap step (M1/M3).
+
+resources:
+  - projects/forgeops.yaml
+  - applications/auth-service-dev.yaml
+  - applications/auth-service-staging.yaml
+  - applications/auth-service-prod.yaml
+  - notifications/notifications-cm.yaml
+  - notifications/notifications-secret.yaml

@@ -1,0 +1,55 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: auth-service-smoke-test
+  labels:
+    app.kubernetes.io/name: auth-service
+    app.kubernetes.io/instance: auth-service
+spec:
+  metrics:
+    - name: smoke-test
+      # A single run: pass/fail comes from the Job's exit code, no polling.
+      count: 1
+      failureLimit: 0
+      provider:
+        job:
+          metadata:
+            labels:
+              app.kubernetes.io/name: auth-service
+              app.kubernetes.io/component: smoke-test
+          spec:
+            backoffLimit: 0
+            activeDeadlineSeconds: 120
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: auth-service
+                  app.kubernetes.io/component: smoke-test
+              spec:
+                restartPolicy: Never
+                serviceAccountName: auth-service
+                automountServiceAccountToken: false
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 65532
+                  runAsGroup: 65532
+                  seccompProfile:
+                    type: RuntimeDefault
+                containers:
+                  - name: smoke-test
+                    image: curlimages/curl:8.10.1
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities:
+                        drop:
+                          - ALL
+                      readOnlyRootFilesystem: true
+                      runAsNonRoot: true
+                      runAsUser: 65532
+                    command:
+                      - sh
+                      - -c
+                      - |
+                        set -eu
+                        curl -sf --max-time 5 "http://auth-service-canary.auth-service-prod.svc.cluster.local/readyz"
+                        curl -sf --max-time 5 "http://auth-service-canary.auth-service-prod.svc.cluster.local/healthz"

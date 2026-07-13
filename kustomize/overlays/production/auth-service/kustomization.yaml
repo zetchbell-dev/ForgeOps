@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: auth-service-prod
+
+resources:
+  - ../../../base/auth-service
+  - namespace.yaml
+  - delete-deployment.yaml     # base ships a Deployment; prod runs an Argo Rollout instead
+  - rollout.yaml
+  - service-canary.yaml        # canary Service required by rollout.yaml's canary strategy
+  - analysistemplate.yaml
+  - smoke-test-job.yaml
+
+commonLabels:
+  environment: prod
+
+# Promotion PRs bump this to a SHA already proven in staging (M4 promotion
+# flow), never typed manually — same convention as the staging overlay.
+images:
+  - name: ghcr.io/enterprise-cicd-platform/auth-service
+    newTag: placeholder
+
+patchesStrategicMerge:
+  - hpa-patch.yaml    # retargets HPA at the Rollout instead of the Deployment, minReplicas 3 / maxReplicas 15
+  - pdb-patch.yaml    # minAvailable: 2 (mirrors Phase 1 Helm's examples/values-production.yaml)
+
+# Prod-specific config overrides layered on top of base's defaults.
+# `behavior: merge` keeps base keys not listed here and lets kustomize
+# keep the Rollout's configMapKeyRef.name pointed at the merged,
+# re-hashed ConfigMap automatically.
+configMapGenerator:
+  - name: auth-service-config
+    behavior: merge
+    literals:
+      - REDIS_ADDR=auth-service-redis-master.auth-service-prod.svc.cluster.local:6379
+      - BCRYPT_COST=14
+
+# NOTE on image update strategy: production intentionally does NOT use
+# Argo CD Image Updater to auto-bump tags (unlike a fully automated
+# dev/staging loop). The `images.newTag` value above is only ever changed
+# by a promotion PR that pins an exact tag already soaked in staging —
+# this keeps the production image change auditable as a normal Git diff
+# and gated by required PR review, consistent with the staging overlay's
+# promotion-PR convention.

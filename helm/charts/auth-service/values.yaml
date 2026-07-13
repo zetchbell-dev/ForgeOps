@@ -1,0 +1,183 @@
+# Default values for auth-service.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/enterprise-cicd-platform/auth-service
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Automatically mount a ServiceAccount's API credentials
+  automount: false
+  # Annotations to add to the service account (e.g. IRSA role ARN)
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: auth.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: auth-service-tls
+  #    hosts:
+  #      - auth.example.com
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  # Exactly one of minAvailable / maxUnavailable should be set.
+  minAvailable: 1
+  maxUnavailable: ""
+
+networkPolicy:
+  enabled: true
+  # Allow ingress only from pods in the same namespace by default, plus
+  # anything matching additionalIngressFrom (e.g. an ingress-nginx
+  # namespace selector). Egress is restricted to DNS, Postgres, and Redis
+  # ports; extend additionalEgressTo for other dependencies.
+  additionalIngressFrom: []
+  additionalEgressTo: []
+  egress:
+    postgresPort: 5432
+    redisPort: 6379
+
+# --- Application configuration --------------------------------------------
+#
+# Auth Service reads its configuration from environment variables
+# (services/auth-service/config/config.go). Non-secret values live in a
+# ConfigMap; secret values are never placed in values.yaml directly for
+# anything beyond local/dev use — set secrets.existingSecret in
+# staging/production instead. See values-production.yaml.
+config:
+  port: "8080"
+  shutdownTimeout: "15s"
+  redisAddr: "auth-service-redis-master:6379"
+  redisDB: "0"
+  jwtIssuer: "forgeops-auth-service"
+  jwtAccessTokenTTL: "15m"
+  bcryptCost: "12"
+
+secrets:
+  # If existingSecret is set, the chart consumes that Secret instead of
+  # creating one, and the keys below map the chart's expected env vars to
+  # the keys inside that existing Secret. This is the required mode for
+  # staging/production — see values-production.yaml.
+  existingSecret: ""
+  existingSecretKeys:
+    postgresDSN: POSTGRES_DSN
+    jwtSigningKey: JWT_SIGNING_KEY
+    redisPassword: REDIS_PASSWORD
+
+  # Only used when existingSecret is unset (chart creates its own Secret
+  # from these values). Intended for local/dev only — do not put real
+  # credentials here in a values file committed to Git.
+  postgresDSN: ""
+  jwtSigningKey: ""
+  redisPassword: ""
+
+# --- Database migration ----------------------------------------------------
+# Runs `/app/migrate -direction=up` as a Helm hook Job before install/upgrade,
+# reusing the same image and the same secret/config env as the Deployment.
+migration:
+  enabled: true
+  # pre-install,pre-upgrade keeps the schema current before new pods roll
+  # out; hook-succeeded cleans up completed Jobs, hook-failed keeps a
+  # failed one around for `kubectl logs`/debugging.
+  hookWeight: "-5"
+  backoffLimit: 3
+  activeDeadlineSeconds: 120
+  resources:
+    limits:
+      cpu: 250m
+      memory: 128Mi
+    requests:
+      cpu: 100m
+      memory: 64Mi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Extra environment variables (name/value or name/valueFrom) appended
+# as-is to the container spec, for anything not covered by config/secrets
+# above (e.g. OTEL_EXPORTER_OTLP_ENDPOINT wiring in a later milestone).
+extraEnv: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Pod-level topology spread, useful once autoscaling.minReplicas > 1 across
+# multiple AZs; left empty by default and set per-environment.
+topologySpreadConstraints: []

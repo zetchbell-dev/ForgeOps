@@ -1,0 +1,50 @@
+Auth Service ({{ .Chart.Name }}) has been deployed.
+
+Release:    {{ .Release.Name }}
+Namespace:  {{ .Release.Namespace }}
+Image:      {{ include "auth-service.image" . }}
+
+{{- if .Values.migration.enabled }}
+
+A pre-install/pre-upgrade Job ran `/app/migrate -direction=up` against
+POSTGRES_DSN before the Deployment rolled out. Check its status with:
+
+  kubectl get job {{ include "auth-service.fullname" . }}-migrate -n {{ .Release.Namespace }}
+  kubectl logs job/{{ include "auth-service.fullname" . }}-migrate -n {{ .Release.Namespace }}
+{{- end }}
+
+Check rollout status:
+
+  kubectl rollout status deployment/{{ include "auth-service.fullname" . }} -n {{ .Release.Namespace }}
+
+{{- if .Values.ingress.enabled }}
+
+Ingress hosts:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}{{ (index .paths 0).path }}
+{{- end }}
+{{- else }}
+
+Ingress is disabled. Reach the service from inside the cluster at:
+
+  http://{{ include "auth-service.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+Port-forward for local access:
+
+  kubectl port-forward svc/{{ include "auth-service.fullname" . }} 8080:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+{{- end }}
+
+{{- if not .Values.secrets.existingSecret }}
+
+WARNING: secrets.existingSecret is not set — this release is using the
+chart-managed Secret populated from values (secrets.postgresDSN /
+secrets.jwtSigningKey / secrets.redisPassword). This is intended for
+local/dev only. Set secrets.existingSecret before deploying to
+staging or production.
+{{- end }}
+
+Verify health once pods are ready:
+
+  kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "auth-service.fullname" . }} -- true 2>/dev/null; \
+  kubectl run -n {{ .Release.Namespace }} auth-check --rm -it --restart=Never --image=curlimages/curl -- \
+    curl -sf http://{{ include "auth-service.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/readyz

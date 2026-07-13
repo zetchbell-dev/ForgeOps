@@ -1,0 +1,50 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base namespace. Overlays override this via their own `namespace:` field
+# (auth-service-dev / auth-service-staging / auth-service-prod) plus a
+# matching Namespace resource — see overlays/<env>/auth-service/namespace.yaml.
+namespace: auth-service
+
+commonLabels:
+  app.kubernetes.io/name: auth-service
+  app.kubernetes.io/instance: auth-service
+  app.kubernetes.io/part-of: forgeops
+  app.kubernetes.io/managed-by: kustomize
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - deployment.yaml
+  - service.yaml
+  - pdb.yaml
+  - hpa.yaml
+  - networkpolicy.yaml
+
+# Non-secret configuration. Values here are the "dev-safe" defaults (mirrors
+# helm/charts/auth-service/values.yaml's `config:` block from Phase 1).
+# Overlays layer environment-specific overrides on top with
+# `behavior: merge`, and kustomize auto-updates the deployment's
+# configMapKeyRef.name to the generated (hashed) name — no manual wiring
+# needed downstream.
+configMapGenerator:
+  - name: auth-service-config
+    literals:
+      - PORT=8080
+      - SHUTDOWN_TIMEOUT=15s
+      - REDIS_ADDR=auth-service-redis-master:6379
+      - REDIS_DB=0
+      - JWT_ISSUER=forgeops-auth-service
+      - JWT_ACCESS_TOKEN_TTL=15m
+      - BCRYPT_COST=12
+
+# NOTE: no secretGenerator here by design. auth-service-credentials (the
+# Secret referenced by deployment.yaml's POSTGRES_DSN / JWT_SIGNING_KEY /
+# REDIS_PASSWORD env vars) is provisioned out-of-band per environment
+# (External Secrets Operator / Sealed Secrets / SOPS) — same convention
+# Phase 1's Helm chart documents via `secrets.existingSecret`. The manifest
+# repo only ever references it by name, never creates it.
+
+images:
+  - name: ghcr.io/enterprise-cicd-platform/auth-service
+    newTag: placeholder

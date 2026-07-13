@@ -1,0 +1,41 @@
+# Example values for a development install.
+# helm install auth-service ./charts/auth-service -f examples/values-development.yaml -n auth-dev
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/enterprise-cicd-platform/auth-service
+  tag: "dev"
+  pullPolicy: Always
+
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+resources:
+  limits:
+    cpu: 250m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+ingress:
+  enabled: false
+
+# Dev-only: chart creates its own Secret from these values. Never do this
+# for staging/production (use secrets.existingSecret instead).
+secrets:
+  existingSecret: ""
+  postgresDSN: "postgres://auth:auth@postgres.auth-dev.svc.cluster.local:5432/auth?sslmode=disable"
+  jwtSigningKey: "dev-only-signing-key-do-not-use-in-production"
+  redisPassword: ""
+
+config:
+  redisAddr: "redis.auth-dev.svc.cluster.local:6379"
+  bcryptCost: "4" # cheap hashing in dev only, never in staging/prod
+
+networkPolicy:
+  enabled: false

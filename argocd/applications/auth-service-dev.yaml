@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: auth-service-dev
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: forgeops
+    environment: dev
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: forgeops
+
+  source:
+    repoURL: https://github.com/enterprise-cicd-platform/ForgeOps
+    targetRevision: main
+    path: kustomize/overlays/development/auth-service
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: auth-service-dev
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false   # namespace.yaml is a managed resource in the overlay itself
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+
+  revisionHistoryLimit: 10

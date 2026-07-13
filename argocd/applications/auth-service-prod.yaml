@@ -1,0 +1,61 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: auth-service-prod
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: forgeops
+    environment: prod
+  annotations:
+    # Argo CD Notifications (see ../notifications/notifications-cm.yaml)
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: forgeops-deploys
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: forgeops-deploys
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: forgeops-deploys
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: forgeops
+
+  source:
+    repoURL: https://github.com/enterprise-cicd-platform/ForgeOps
+    targetRevision: main
+    path: kustomize/overlays/production/auth-service
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: auth-service-prod
+
+  # Prod is promote-then-approve: the promotion PR still requires review
+  # (same as staging), but the resulting Argo CD sync itself is a deliberate
+  # human action rather than automatic, giving one more explicit checkpoint
+  # before a canary rollout starts shifting production traffic.
+  syncPolicy:
+    automated: null
+    syncOptions:
+      - CreateNamespace=false
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ServerSideApply=true   # Rollout status subresource plays better with SSA
+    retry:
+      limit: 3
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
+
+  ignoreDifferences:
+    # The Argo Rollouts controller mutates spec.replicas at runtime during
+    # a canary (and the HPA further adjusts it) — don't let ArgoCD fight it.
+    - group: argoproj.io
+      kind: Rollout
+      jsonPointers:
+        - /spec/replicas
+    # Argo Rollouts rewrites the canary Service's selector to track the
+    # active canary ReplicaSet's pod-template-hash.
+    - group: ""
+      kind: Service
+      name: auth-service-canary
+      jsonPointers:
+        - /spec/selector
+
+  revisionHistoryLimit: 20

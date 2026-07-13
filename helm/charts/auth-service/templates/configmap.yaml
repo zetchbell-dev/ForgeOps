@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "auth-service.configMapName" . }}
+  labels:
+    {{- include "auth-service.labels" . | nindent 4 }}
+data:
+  PORT: {{ .Values.config.port | quote }}
+  SHUTDOWN_TIMEOUT: {{ .Values.config.shutdownTimeout | quote }}
+  REDIS_ADDR: {{ .Values.config.redisAddr | quote }}
+  REDIS_DB: {{ .Values.config.redisDB | quote }}
+  JWT_ISSUER: {{ .Values.config.jwtIssuer | quote }}
+  JWT_ACCESS_TOKEN_TTL: {{ .Values.config.jwtAccessTokenTTL | quote }}
+  BCRYPT_COST: {{ .Values.config.bcryptCost | quote }}

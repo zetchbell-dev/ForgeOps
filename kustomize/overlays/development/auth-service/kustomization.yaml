@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: auth-service-dev
+
+resources:
+  - ../../../base/auth-service
+  - namespace.yaml
+
+commonLabels:
+  environment: dev
+
+# CI (M3) bumps this tag on every merge to main; ArgoCD auto-syncs dev.
+images:
+  - name: ghcr.io/enterprise-cicd-platform/auth-service
+    newTag: dev
+
+replicas:
+  - name: auth-service
+    count: 1
+
+patchesStrategicMerge:
+  - delete-hpa.yaml
+  - deployment-patch.yaml
+
+# Dev-specific config overrides layered on top of base's defaults.
+# `behavior: merge` keeps base keys not listed here and lets kustomize
+# keep the deployment's configMapKeyRef.name pointed at the merged,
+# re-hashed ConfigMap automatically.
+configMapGenerator:
+  - name: auth-service-config
+    behavior: merge
+    literals:
+      - REDIS_ADDR=auth-service-redis-master.auth-service-dev.svc.cluster.local:6379
+      - JWT_ACCESS_TOKEN_TTL=60m

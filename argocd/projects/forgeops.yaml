@@ -1,0 +1,73 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: forgeops
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: forgeops
+spec:
+  description: ForgeOps platform services (auth-service and future microservices)
+
+  sourceRepos:
+    - https://github.com/enterprise-cicd-platform/ForgeOps
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: auth-service-dev
+    - server: https://kubernetes.default.svc
+      namespace: auth-service-staging
+    - server: https://kubernetes.default.svc
+      namespace: auth-service-prod
+
+  # Namespace-scoped resources ArgoCD is allowed to manage inside the
+  # destinations above.
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: "*"
+    - group: "apps"
+      kind: "*"
+    - group: "batch"
+      kind: "*"
+    - group: "autoscaling"
+      kind: "*"
+    - group: "policy"
+      kind: "*"
+    - group: "networking.k8s.io"
+      kind: "*"
+    - group: "argoproj.io"
+      kind: "*"
+
+  # Cluster-scoped resources this project may create/manage (Namespace
+  # objects live in each overlay; nothing else needs cluster scope here).
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+
+  roles:
+    - name: platform-team
+      description: Full sync/manage access across all ForgeOps environments
+      policies:
+        - p, proj:forgeops:platform-team, applications, *, forgeops/*, allow
+      groups:
+        - forgeops-platform-team
+
+    - name: developers
+      description: Read + manual sync in dev/staging only, no prod access
+      policies:
+        - p, proj:forgeops:developers, applications, get, forgeops/*, allow
+        - p, proj:forgeops:developers, applications, sync, forgeops/auth-service-dev, allow
+        - p, proj:forgeops:developers, applications, sync, forgeops/auth-service-staging, allow
+      groups:
+        - forgeops-developers
+
+  syncWindows:
+    # Require explicit manual approval for prod syncs outside business
+    # hours isn't modeled here (that belongs to the promotion PR gate in
+    # CI/M3) — this window instead blocks *automated* prod syncs during a
+    # weekly maintenance freeze.
+    - kind: deny
+      schedule: "0 0 * * 6"
+      duration: 24h
+      applications:
+        - auth-service-prod
+      manualSync: true
