@@ -1,0 +1,172 @@
+# =============================================================================
+# ForgeOps — Local Development Stack
+# =============================================================================
+# Scope: LOCAL DEVELOPMENT ONLY.
+#
+# This Compose file exists so that engineers can run Auth Service (and any
+# future ForgeOps service) against real Postgres and Redis instances on
+# their workstation, without needing AWS access or a live EKS cluster.
+#
+# It has no relationship to, and must never be treated as a substitute for,
+# production infrastructure. Production Postgres and Redis are provisioned
+# and managed exclusively via Terraform (AWS RDS / ElastiCache) as defined
+# under infrastructure/terraform/. This file does not deploy to, sync with,
+# or get referenced by Helm, Kustomize, ArgoCD, or any GitHub Actions
+# workflow. If you are looking for how staging/production databases are
+# provisioned, this is the wrong file.
+#
+# Services:
+#   - postgres       PostgreSQL 16 — primary datastore for Auth Service
+#   - redis          Redis 7       — session/token cache for Auth Service
+#   - pgadmin        pgAdmin 4     — web UI for inspecting Postgres
+#   - redis-insight   Redis Insight — web UI for inspecting Redis
+#
+# All credentials are supplied via .env (git-ignored in real usage; the
+# checked-in .env here contains development-only defaults, never
+# production secrets). See docker/README.md for full usage instructions.
+# =============================================================================
+
+name: forgeops-local
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — primary relational datastore for Auth Service (local only)
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: forgeops-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Ensures deterministic, predictable text sorting/collation across
+      # developer machines regardless of host OS locale.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      # HOST:CONTAINER — override POSTGRES_PORT in .env if 5432 is already
+      # in use on your machine (common when a system-wide Postgres is
+      # also installed).
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      # Named volume: survives `docker compose down`, removed only with
+      # `docker compose down -v` (see README's "How to remove volumes").
+      - forgeops_postgres_data:/var/lib/postgresql/data
+      # Optional init scripts (*.sql / *.sh) — anything dropped in
+      # ./init/postgres runs once, on first container creation only.
+      - ./init/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # pg_isready confirms the server is accepting connections, not just
+      # that the process is running — this is what depends_on below
+      # actually waits on.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - forgeops-local-net
+
+  # ---------------------------------------------------------------------------
+  # Redis — cache / session store for Auth Service (local only)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: forgeops-redis
+    restart: unless-stopped
+    # --requirepass sourced from .env so no credential is hardcoded here.
+    # --appendonly yes enables AOF persistence so cached data (and any
+    # local testing state) survives a container restart, mirroring how
+    # ElastiCache is configured for durability in production.
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+      --appendfsync everysec
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - forgeops_redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD} ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - forgeops-local-net
+
+  # ---------------------------------------------------------------------------
+  # pgAdmin 4 — optional web UI for inspecting/querying Postgres
+  # ---------------------------------------------------------------------------
+  pgadmin:
+    # Pinned rather than :latest so a `docker compose pull` doesn't silently
+    # change behavior underfoot. Bump deliberately; verify the tag exists
+    # on Docker Hub before changing it.
+    image: dpage/pgadmin4:9.16
+    container_name: forgeops-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+      # Suppresses pgAdmin's built-in master-password prompt on top of the
+      # login above — one password is enough for a local dev tool.
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "${PGADMIN_PORT}:80"
+    volumes:
+      - forgeops_pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        # Waits for Postgres's healthcheck to pass (not just container
+        # start) before pgAdmin starts — avoids a race where pgAdmin
+        # boots against a Postgres that isn't accepting connections yet.
+        condition: service_healthy
+    networks:
+      - forgeops-local-net
+
+  # ---------------------------------------------------------------------------
+  # Redis Insight — optional web UI for inspecting Redis keys/data
+  # ---------------------------------------------------------------------------
+  redis-insight:
+    # Pinned rather than :latest, same reasoning as pgadmin above.
+    image: redis/redisinsight:3.6
+    container_name: forgeops-redis-insight
+    restart: unless-stopped
+    ports:
+      - "${REDIS_INSIGHT_PORT}:5540"
+    volumes:
+      - forgeops_redis_insight_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - forgeops-local-net
+
+# =============================================================================
+# Named volumes — persist data across `docker compose down` (but not
+# `docker compose down -v`). Docker manages these; no host bind-mount path
+# is required for the data itself.
+# =============================================================================
+volumes:
+  forgeops_postgres_data:
+    name: forgeops_postgres_data
+  forgeops_redis_data:
+    name: forgeops_redis_data
+  forgeops_pgadmin_data:
+    name: forgeops_pgadmin_data
+  forgeops_redis_insight_data:
+    name: forgeops_redis_insight_data
+
+# =============================================================================
+# Dedicated bridge network — isolates this stack's inter-container traffic
+# from other Compose projects that might be running on the same machine,
+# and gives every service a stable DNS name (its service name) that other
+# containers on this network — including a locally-run Auth Service
+# container, if you choose to run it via Compose too — can resolve.
+# =============================================================================
+networks:
+  forgeops-local-net:
+    name: forgeops-local-net
+    driver: bridge

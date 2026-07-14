@@ -1,0 +1,3 @@
+# Local-only environment file — copy from .env.example instead of editing
+# this in place. See README.md for setup instructions.
+.env
