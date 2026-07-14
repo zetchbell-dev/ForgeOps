@@ -142,8 +142,19 @@ jobs:
           go-version: ${{ inputs.go-version }}
 
       - name: Load extra test env vars from secret
-        if: ${{ secrets.test-env-vars != '' }}
-        run: printf '%s\n' "${{ secrets.test-env-vars }}" >> "$GITHUB_ENV"
+        # NOTE: the `secrets` context cannot be referenced in `if:` at
+        # all — job-level or step-level, reusable workflow or not. It is
+        # only ever legal inside `run:`/`env:`/`with:`. So the "is this
+        # optional secret actually set" check has to happen inside the
+        # shell, not in the step's `if:`. Passed through `env:` rather
+        # than interpolated into the `run:` string, so the raw secret
+        # value never appears rendered into the command itself.
+        env:
+          TEST_ENV_VARS: ${{ secrets.test-env-vars }}
+        run: |
+          if [ -n "$TEST_ENV_VARS" ]; then
+            printf '%s\n' "$TEST_ENV_VARS" >> "$GITHUB_ENV"
+          fi
 
       - name: Run tests with coverage
         run: go test ${{ inputs.test-flags }} -coverprofile=coverage.out -covermode=atomic ./...
@@ -220,8 +231,14 @@ jobs:
           go-version: ${{ inputs.go-version }}
 
       - name: Load extra test env vars from secret
-        if: ${{ secrets.test-env-vars != '' }}
-        run: printf '%s\n' "${{ secrets.test-env-vars }}" >> "$GITHUB_ENV"
+        # See the identical step in the `test` job above for why this
+        # can't be a step-level `if:` on secrets.
+        env:
+          TEST_ENV_VARS: ${{ secrets.test-env-vars }}
+        run: |
+          if [ -n "$TEST_ENV_VARS" ]; then
+            printf '%s\n' "$TEST_ENV_VARS" >> "$GITHUB_ENV"
+          fi
 
       - name: Apply migrations
         if: ${{ inputs.migrate-command != '' }}
