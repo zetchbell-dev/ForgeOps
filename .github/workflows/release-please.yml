@@ -21,6 +21,34 @@
 # major, tag format, etc.) against the current googleapis/release-please
 # docs / v4 action README before relying on this in production, since
 # details here may drift from whatever version is current when you run it.
+#
+# --- Token: why this uses a PAT instead of the default GITHUB_TOKEN ---
+#
+# "GitHub Actions is not permitted to create or approve pull requests" is
+# NOT fixed by this workflow's `permissions:` block or by the repo-level
+# "Allow GitHub Actions to create and approve pull requests" setting alone
+# — both were already correct. That specific restriction can *also* be
+# enforced at the organization level and, above that, the GitHub
+# Enterprise level; a repo-level checkbox can show as enabled while a
+# higher-level policy still silently blocks it. If PR creation is still
+# failing after confirming org/enterprise settings, or if you'd rather not
+# depend on that org policy at all, supply a real identity instead of the
+# default GITHUB_TOKEN — the "no Actions-created PRs" restriction only
+# ever applies to GITHUB_TOKEN, never to a PAT or GitHub App token, since
+# those aren't the identity the restriction targets.
+#
+# Setup (one-time):
+#   1. Create a fine-grained Personal Access Token (or a GitHub App
+#      installation token, preferred for org use — see
+#      actions/create-github-app-token) scoped to this repo only, with
+#      Contents: read/write and Pull requests: read/write permissions.
+#   2. Store it as a repository secret named RELEASE_PLEASE_TOKEN.
+#   3. Nothing else changes — the `token:` input below picks it up.
+#
+# This also fixes a second, unrelated limitation of the default
+# GITHUB_TOKEN: PRs/commits it creates do not trigger other workflows
+# (GitHub's loop-prevention behavior), so status checks would never run
+# on the release PR. A PAT/App token doesn't have that limitation either.
 
 name: release-please
 
@@ -38,5 +66,6 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json

@@ -49,6 +49,17 @@ on:
 
 permissions:
   contents: read
+  # Required by the nested `codeql` job inside reusable-security-gates.yml
+  # (to upload SARIF results to the repo's Security tab). GITHUB_TOKEN
+  # permissions can only be downgraded, never elevated, as they pass down
+  # a reusable-workflow call chain — this is the top-level caller in that
+  # chain (auth-service-ci -> security-gates -> codeql), so it's the only
+  # place this can be granted. Declaring it here does NOT hand
+  # security-events: write to every job below; each called workflow/job
+  # still only gets what it explicitly requests, up to this ceiling —
+  # lint-test and build never asked for it, so they still run with
+  # contents: read only.
+  security-events: write
 
 jobs:
   lint-test:
