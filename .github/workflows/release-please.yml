@@ -25,30 +25,47 @@
 # --- Token: why this uses a PAT instead of the default GITHUB_TOKEN ---
 #
 # "GitHub Actions is not permitted to create or approve pull requests" is
-# NOT fixed by this workflow's `permissions:` block or by the repo-level
-# "Allow GitHub Actions to create and approve pull requests" setting alone
-# — both were already correct. That specific restriction can *also* be
-# enforced at the organization level and, above that, the GitHub
-# Enterprise level; a repo-level checkbox can show as enabled while a
-# higher-level policy still silently blocks it. If PR creation is still
-# failing after confirming org/enterprise settings, or if you'd rather not
-# depend on that org policy at all, supply a real identity instead of the
-# default GITHUB_TOKEN — the "no Actions-created PRs" restriction only
-# ever applies to GITHUB_TOKEN, never to a PAT or GitHub App token, since
-# those aren't the identity the restriction targets.
+# not fixed by this workflow's `permissions:` block or by the repo-level
+# "Allow GitHub Actions to create and approve pull requests" setting
+# alone — both were already correct here. That specific restriction can
+# also be enforced above the repository (organization policy, and above
+# that, GitHub Enterprise policy) — a repo-level checkbox can show as
+# enabled while a higher-level policy still silently blocks it. Rather
+# than depend on confirming every layer of that hierarchy, this workflow
+# supplies a real identity instead of the default GITHUB_TOKEN — the "no
+# Actions-created PRs" restriction only ever applies to GITHUB_TOKEN,
+# never to a PAT or GitHub App token, since those aren't the identity the
+# restriction targets. (If this repo turns out not to sit under an
+# org/enterprise policy at all, the PAT approach still works and is what
+# this file uses — it just means that wasn't the original cause here.)
 #
-# Setup (one-time):
-#   1. Create a fine-grained Personal Access Token (or a GitHub App
-#      installation token, preferred for org use — see
-#      actions/create-github-app-token) scoped to this repo only, with
-#      Contents: read/write and Pull requests: read/write permissions.
-#   2. Store it as a repository secret named RELEASE_PLEASE_TOKEN.
-#   3. Nothing else changes — the `token:` input below picks it up.
+# Setup (already done for this repo — kept here so the next service/
+# environment that copies this file knows what to replicate):
+#   1. A fine-grained Personal Access Token was created, scoped to this
+#      repository only.
+#   2. It's stored as the repository secret RELEASE_PLEASE_TOKEN, which
+#      the `token:` input below reads.
+#   3. The PAT's own repository permissions (set at token-creation time
+#      in GitHub's UI, NOT in this file) must include:
+#        - Contents: Read and write   (pushes CHANGELOG.md, version bump
+#          commits, tags/releases)
+#        - Pull requests: Read and write   (opens/updates the release PR)
+#        - Issues: Read and write   (release-please labels the PRs it
+#          opens with "autorelease: pending" by default; label writes go
+#          through the Issues API even though the label is on a PR — easy
+#          to miss, and the failure mode if it's missing looks unrelated:
+#          PR creation succeeds, labeling fails.)
+#      If PR creation starts succeeding but labeling fails, this is the
+#      first thing to check — it's a PAT scope, not a workflow-file fix.
+#   4. When this PAT expires (fine-grained PATs have a mandatory max
+#      expiry), it needs to be regenerated and the secret updated, or
+#      this workflow starts failing again with the same symptom it had
+#      before the PAT existed.
 #
-# This also fixes a second, unrelated limitation of the default
-# GITHUB_TOKEN: PRs/commits it creates do not trigger other workflows
-# (GitHub's loop-prevention behavior), so status checks would never run
-# on the release PR. A PAT/App token doesn't have that limitation either.
+# This PAT-based approach also fixes a second, unrelated limitation of
+# the default GITHUB_TOKEN: PRs/commits it creates do not trigger other
+# workflows (GitHub's loop-prevention behavior), so status checks would
+# never run on the release PR. A PAT doesn't have that limitation.
 
 name: release-please
 

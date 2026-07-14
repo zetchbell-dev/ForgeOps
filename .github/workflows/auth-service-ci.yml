@@ -60,6 +60,18 @@ permissions:
   # lint-test and build never asked for it, so they still run with
   # contents: read only.
   security-events: write
+  # Required by the nested `build` job inside reusable-docker-build-
+  # publish.yml, which needs id-token: write to mint the short-lived OIDC
+  # JWT that aws-actions/configure-aws-credentials (via the ecr-login
+  # composite action) exchanges for temporary AWS credentials to assume
+  # AUTH_SERVICE_ECR_PUSH_ROLE_ARN. Same ceiling reasoning as
+  # security-events above: the build job already declares id-token: write
+  # at its own job level and always has — that was never the bug. It's
+  # granted here, at the top-level caller, because that's the only point
+  # in the chain (auth-service-ci -> reusable-docker-build-publish ->
+  # build) that can raise the ceiling; a called workflow can only
+  # downgrade what the caller grants, never elevate past it.
+  id-token: write
 
 jobs:
   lint-test:
