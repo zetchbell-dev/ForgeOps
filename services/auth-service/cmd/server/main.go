@@ -25,9 +25,9 @@ import (
 	libredis "github.com/redis/go-redis/v9"
 
 	"github.com/enterprise-cicd-platform/auth-service/config"
-	postgres "github.com/enterprise-cicd-platform/auth-service/internal/infrastructure/postgres"
 	"github.com/enterprise-cicd-platform/auth-service/internal/infrastructure/bcrypt"
 	"github.com/enterprise-cicd-platform/auth-service/internal/infrastructure/jwt"
+	postgres "github.com/enterprise-cicd-platform/auth-service/internal/infrastructure/postgres"
 	"github.com/enterprise-cicd-platform/auth-service/internal/infrastructure/redis"
 	"github.com/enterprise-cicd-platform/auth-service/internal/observability/httpmw"
 	"github.com/enterprise-cicd-platform/auth-service/internal/observability/metrics"
