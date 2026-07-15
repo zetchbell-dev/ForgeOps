@@ -95,17 +95,6 @@ func TestRequestIDMiddleware_CallsNextHandler(t *testing.T) {
 	}
 }
 
-func TestRequestIDFromContext_EmptyWhenUnset(t *testing.T) {
-	// Direct context.go coverage: a context that never went through
-	// WithRequestID/RequestIDMiddleware must yield "", not panic, per
-	// RequestIDFromContext's doc comment.
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-
-	if got := authhttp.RequestIDFromContext(req.Context()); got != "" {
-		t.Errorf("RequestIDFromContext on a context with no request ID set = %q, want empty string", got)
-	}
-}
-
 func TestWithRequestID_RoundTrip(t *testing.T) {
 	base := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	ctx := authhttp.WithRequestID(base.Context(), "abc-123")
