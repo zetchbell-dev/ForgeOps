@@ -21,7 +21,20 @@ runs:
     - name: gofmt
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: gofmt -l . | tee /tmp/gofmt.out && test ! -s /tmp/gofmt.out
+      # -l lists filenames that would be reformatted; -d additionally
+      # prints the actual diff for each one. -l alone (the previous
+      # version of this step) only ever tells you *which* file failed,
+      # never *what* gofmt wants changed — every future failure on this
+      # check would otherwise require reproducing the exact CI Go
+      # toolchain locally just to see the diff. Run separately from -l
+      # (rather than combined as `gofmt -l -d`) so /tmp/gofmt.out — the
+      # file test ! -s actually gates on — holds only filenames, keeping
+      # the pass/fail logic exactly as it was; the -d diff is for the
+      # human reading the log, not for the emptiness check.
+      run: |
+        gofmt -d . | tee /tmp/gofmt.diff
+        gofmt -l . | tee /tmp/gofmt.out
+        test ! -s /tmp/gofmt.out
 
     - name: go vet
       shell: bash
